@@ -1,0 +1,384 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <base target="_top">
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Google Drive CLI</title>
+  <style>
+    * {
+      margin: 0;
+      padding: 0;
+      box-sizing: border-box;
+    }
+
+    body {
+      font-family: 'Courier New', Courier, monospace;
+      background-color: #1e1e1e;
+      color: #d4d4d4;
+      height: 100vh;
+      display: flex;
+      flex-direction: column;
+      overflow: hidden;
+    }
+
+    /* ヘッダー */
+    .header {
+      background-color: #2d2d30;
+      padding: 10px 20px;
+      border-bottom: 1px solid #3e3e42;
+      display: flex;
+      align-items: center;
+      gap: 10px;
+    }
+
+    .header h1 {
+      font-size: 14px;
+      font-weight: normal;
+      color: #cccccc;
+    }
+
+    .status {
+      margin-left: auto;
+      font-size: 12px;
+      color: #858585;
+    }
+
+    /* ターミナル出力エリア */
+    .terminal {
+      flex: 1;
+      padding: 20px;
+      overflow-y: auto;
+      font-size: 14px;
+      line-height: 1.6;
+    }
+
+    .terminal::-webkit-scrollbar {
+      width: 10px;
+    }
+
+    .terminal::-webkit-scrollbar-track {
+      background: #1e1e1e;
+    }
+
+    .terminal::-webkit-scrollbar-thumb {
+      background: #424242;
+      border-radius: 5px;
+    }
+
+    /* 出力行 */
+    .output-line {
+      margin-bottom: 5px;
+      white-space: pre-wrap;
+      word-wrap: break-word;
+    }
+
+    .prompt {
+      color: #4ec9b0;
+      font-weight: bold;
+    }
+
+    .command {
+      color: #dcdcaa;
+    }
+
+    .result {
+      color: #d4d4d4;
+      margin-left: 0;
+    }
+
+    .error {
+      color: #f48771;
+    }
+
+    .success {
+      color: #b5cea8;
+    }
+
+    /* 入力エリア */
+    .input-container {
+      background-color: #252526;
+      border-top: 1px solid #3e3e42;
+      padding: 15px 20px;
+      display: flex;
+      align-items: center;
+      gap: 10px;
+    }
+
+    .input-prompt {
+      color: #4ec9b0;
+      font-weight: bold;
+      flex-shrink: 0;
+    }
+
+    #commandInput {
+      flex: 1;
+      background-color: #3c3c3c;
+      border: 1px solid #3e3e42;
+      color: #d4d4d4;
+      font-family: 'Courier New', Courier, monospace;
+      font-size: 14px;
+      padding: 8px 12px;
+      outline: none;
+      border-radius: 3px;
+    }
+
+    #commandInput:focus {
+      border-color: #007acc;
+      box-shadow: 0 0 0 1px #007acc;
+    }
+
+    /* ローディング */
+    .loading {
+      display: inline-block;
+      color: #858585;
+    }
+
+    .loading::after {
+      content: '...';
+      animation: dots 1.5s steps(4, end) infinite;
+    }
+
+    @keyframes dots {
+      0%, 20% { content: '.'; }
+      40% { content: '..'; }
+      60%, 100% { content: '...'; }
+    }
+
+    /* ウェルカムメッセージ */
+    .welcome {
+      color: #858585;
+      margin-bottom: 20px;
+      border-left: 3px solid #007acc;
+      padding-left: 15px;
+    }
+
+    .welcome strong {
+      color: #4ec9b0;
+    }
+  </style>
+</head>
+<body>
+  <div class="header">
+    <h1>📁 Google Drive CLI</h1>
+    <div class="status" id="status">Ready</div>
+  </div>
+
+  <div class="terminal" id="terminal">
+    <div class="welcome">
+      <strong>Google Drive Command Line Interface</strong><br>
+      Type <strong>help</strong> to see available commands.<br>
+      All operations are performed on your Google Drive root directory.
+    </div>
+  </div>
+
+  <div class="input-container">
+    <span class="input-prompt">drive@root:~$</span>
+    <input 
+      type="text" 
+      id="commandInput" 
+      placeholder="Enter command..." 
+      autocomplete="off"
+      spellcheck="false"
+    >
+  </div>
+
+  <script>
+    // =====================================
+    // State Management
+    // =====================================
+    
+    const state = {
+      commandHistory: [],
+      historyIndex: -1,
+      isProcessing: false
+    };
+
+    // =====================================
+    // DOM Elements
+    // =====================================
+    
+    const terminal = document.getElementById('terminal');
+    const commandInput = document.getElementById('commandInput');
+    const statusEl = document.getElementById('status');
+
+    // =====================================
+    // Event Handlers
+    // =====================================
+    
+    // コマンド入力でEnterキー
+    commandInput.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter') {
+        e.preventDefault();
+        handleCommand();
+      } else if (e.key === 'ArrowUp') {
+        e.preventDefault();
+        navigateHistory('up');
+      } else if (e.key === 'ArrowDown') {
+        e.preventDefault();
+        navigateHistory('down');
+      }
+    });
+
+    // 自動フォーカス
+    window.addEventListener('click', () => {
+      if (!state.isProcessing) {
+        commandInput.focus();
+      }
+    });
+
+    // 初期フォーカス
+    commandInput.focus();
+
+    // =====================================
+    // Core Functions
+    // =====================================
+    
+    /**
+     * コマンド実行のメインハンドラ
+     */
+    function handleCommand() {
+      const command = commandInput.value.trim();
+      
+      if (!command) return;
+      if (state.isProcessing) return;
+      
+      // コマンドを履歴に追加
+      state.commandHistory.push(command);
+      state.historyIndex = state.commandHistory.length;
+      
+      // UIにコマンドを表示
+      appendOutput(`<span class="prompt">drive@root:~$</span> <span class="command">${escapeHtml(command)}</span>`);
+      
+      // 入力をクリアして無効化
+      commandInput.value = '';
+      commandInput.disabled = true;
+      state.isProcessing = true;
+      updateStatus('Processing...');
+      
+      // ローディング表示
+      const loadingId = appendOutput('<span class="loading">Executing</span>', true);
+      
+      // GAS側でコマンドを処理
+      google.script.run
+        .withSuccessHandler((result) => handleSuccess(result, loadingId))
+        .withFailureHandler((error) => handleError(error, loadingId))
+        .processCommand(command);
+    }
+
+    /**
+     * コマンド成功時の処理
+     */
+    function handleSuccess(result, loadingId) {
+      removeOutput(loadingId);
+      
+      const className = result.success ? 'success' : 'error';
+      appendOutput(`<span class="${className}">${escapeHtml(result.output)}</span>`);
+      
+      resetInput();
+    }
+
+    /**
+     * コマンド失敗時の処理
+     */
+    function handleError(error, loadingId) {
+      removeOutput(loadingId);
+      
+      appendOutput(`<span class="error">System Error: ${escapeHtml(error.message)}</span>`);
+      
+      resetInput();
+    }
+
+    /**
+     * 入力状態をリセット
+     */
+    function resetInput() {
+      commandInput.disabled = false;
+      commandInput.focus();
+      state.isProcessing = false;
+      updateStatus('Ready');
+    }
+
+    // =====================================
+    // History Navigation
+    // =====================================
+    
+    /**
+     * コマンド履歴をナビゲート
+     */
+    function navigateHistory(direction) {
+      if (state.commandHistory.length === 0) return;
+      
+      if (direction === 'up') {
+        if (state.historyIndex > 0) {
+          state.historyIndex--;
+          commandInput.value = state.commandHistory[state.historyIndex];
+        }
+      } else if (direction === 'down') {
+        if (state.historyIndex < state.commandHistory.length - 1) {
+          state.historyIndex++;
+          commandInput.value = state.commandHistory[state.historyIndex];
+        } else {
+          state.historyIndex = state.commandHistory.length;
+          commandInput.value = '';
+        }
+      }
+    }
+
+    // =====================================
+    // UI Utilities
+    // =====================================
+    
+    /**
+     * ターミナルに出力を追加
+     */
+    function appendOutput(html, returnsId = false) {
+      const div = document.createElement('div');
+      div.className = 'output-line';
+      div.innerHTML = html;
+      
+      if (returnsId) {
+        const id = 'output-' + Date.now();
+        div.id = id;
+        terminal.appendChild(div);
+        scrollToBottom();
+        return id;
+      }
+      
+      terminal.appendChild(div);
+      scrollToBottom();
+    }
+
+    /**
+     * 指定IDの出力を削除
+     */
+    function removeOutput(id) {
+      const el = document.getElementById(id);
+      if (el) el.remove();
+    }
+
+    /**
+     * ステータス表示を更新
+     */
+    function updateStatus(text) {
+      statusEl.textContent = text;
+    }
+
+    /**
+     * ターミナルを最下部にスクロール
+     */
+    function scrollToBottom() {
+      terminal.scrollTop = terminal.scrollHeight;
+    }
+
+    /**
+     * HTMLエスケープ
+     */
+    function escapeHtml(text) {
+      const div = document.createElement('div');
+      div.textContent = text;
+      return div.innerHTML;
+    }
+  </script>
+</body>
+</html>
