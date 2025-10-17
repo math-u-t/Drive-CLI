@@ -1,33 +1,119 @@
-# Google Drive CLI - 完全技術ドキュメント
+# Google Drive CLI - 拡張版完全技術ドキュメント
 
 ## 目次
 1. [概要](#概要)
-2. [システムアーキテクチャ](#システムアーキテクチャ)
-3. [セットアップ手順](#セットアップ手順)
-4. [コマンドリファレンス](#コマンドリファレンス)
-5. [実装詳細](#実装詳細)
-6. [拡張ガイド](#拡張ガイド)
-7. [トラブルシューティング](#トラブルシューティング)
+2. [数学的仕様](#数学的仕様)
+3. [システムアーキテクチャ](#システムアーキテクチャ)
+4. [セットアップ手順](#セットアップ手順)
+5. [コマンドリファレンス](#コマンドリファレンス)
+6. [実装詳細](#実装詳細)
+7. [状態管理](#状態管理)
+8. [トラブルシューティング](#トラブルシューティング)
 
 ---
 
 ## 概要
 
 ### プロジェクトの目的
-Google Apps Script (GAS) を使用してブラウザ上で動作するGoogle Drive操作用のCLI（コマンドラインインターフェース）を提供する。
+Google Apps Script (GAS) を使用したブラウザベースのGoogle Drive操作用CLI。UNIXライクなコマンド体系を提供し、ファイル・フォルダの管理、メタデータ操作、共有設定を統一されたインターフェースで実現する。
 
 ### 技術スタック
-- **バックエンド**: Google Apps Script (JavaScript ES5+)
-- **フロントエンド**: HTML5 + Vanilla JavaScript
-- **API**: Google Drive API (DriveApp Service)
-- **通信**: `google.script.run` (非同期RPC)
+- **バックエンド**: Google Apps Script (V8 Runtime)
+- **フロントエンド**: HTML5 + Vanilla JavaScript (ES6+)
+- **API**: Google Drive API, Forms API, Sheets API, Docs API, Slides API
+- **通信プロトコル**: `google.script.run` (非同期RPC)
+- **状態管理**: PropertiesService (永続化)
 
 ### 主要機能
-- ファイル一覧表示
-- ファイル作成・削除
-- コマンド履歴管理
-- リアルタイムエラーハンドリング
-- 拡張可能な設計
+- 27個の独立したコマンド
+- ディレクトリナビゲーション (cd, pwd)
+- ファイル・フォルダ操作 (new, rn, del, copy, paste)
+- メタデータ表示 (stat, url)
+- 共有設定 (share)
+- ゴミ箱管理 (trash)
+- UI制御 (dark/lightモード, カラー変更)
+- コマンド履歴 (↑↓キー)
+
+---
+
+## 数学的仕様
+
+### 型定義
+
+システム全体を以下の代数的データ型で形式化する：
+
+#### 基本型
+
+```haskell
+type FileId = String
+type FolderId = String
+type Path = String
+type Email = String
+
+data ItemType = File | Folder
+data Permission = View | Edit | Comment
+data Theme = Dark | Light
+data Color = White | Blue | Green | Red | Yellow | Cyan | Magenta | Black
+```
+
+#### 状態型
+
+```haskell
+data SystemState = SystemState {
+  currentDir :: FolderId,
+  clipboard :: Maybe (ItemType, FileId),
+  theme :: Theme,
+  textColor :: Maybe Color,
+  commandHistory :: [String]
+}
+```
+
+#### コマンド型
+
+すべてのコマンドは以下の型シグネチャに従う：
+
+```haskell
+type Command = [String] -> IO CommandResult
+
+data CommandResult = CommandResult {
+  success :: Bool,
+  output :: String,
+  action :: Maybe Action
+}
+
+data Action 
+  = Clear
+  | Reload
+  | Exit
+  | ColorChange Color
+  | OpenURL String
+```
+
+### 状態遷移
+
+状態遷移関数を以下のように定義する：
+
+$$\delta: S \times C \rightarrow S \times O$$
+
+ここで：
+- $S$: システム状態の集合
+- $C$: コマンドの集合
+- $O$: 出力の集合
+
+各コマンド $c \in C$ に対して、遷移関数は以下の性質を満たす：
+
+1. **決定性**: $\forall s \in S, c \in C: |\delta(s, c)| = 1$
+2. **終了性**: すべての $c$ は有限時間で終了する
+3. **安全性**: 無効な状態への遷移は発生しない
+
+### 不変条件
+
+システムは以下の不変条件 $I$ を維持する：
+
+1. $\text{currentDir} \in \{\text{root}\} \cup \{\text{valid FolderId}\}$
+2. $\text{clipboard} = \text{Nothing} \vee \exists \text{valid ItemId}$
+3. $|\text{commandHistory}| \geq 0$
+4. $\text{historyIndex} \in [0, |\text{commandHistory}|]$
 
 ---
 
@@ -36,45 +122,64 @@ Google Apps Script (GAS) を使用してブラウザ上で動作するGoogle Dri
 ### レイヤー構成
 
 ```
-┌─────────────────────────────────────┐
-│   UI Layer (index.html)             │
-│   - Terminal Rendering              │
-│   - Input Handling                  │
-│   - Command History                 │
-└──────────────┬──────────────────────┘
-               │ google.script.run (RPC)
-┌──────────────▼──────────────────────┐
-│   Business Logic Layer (Code.gs)    │
-│   - Command Processing              │
-│   - Input Validation                │
-│   - Routing                         │
-└──────────────┬──────────────────────┘
-               │ DriveApp API
-┌──────────────▼──────────────────────┐
-│   Google Drive API                  │
-│   - File Operations                 │
-│   - Folder Operations               │
-└─────────────────────────────────────┘
+┌────────────────────────────────────────────┐
+│   Presentation Layer (index.html)          │
+│   - Terminal Rendering                     │
+│   - Event Handling                         │
+│   - Theme Management                       │
+│   - Command History                        │
+└───────────────┬────────────────────────────┘
+                │ google.script.run (RPC)
+┌───────────────▼────────────────────────────┐
+│   Application Layer (Code.gs)              │
+│   - Command Processing                     │
+│   - State Management                       │
+│   - Input Validation                       │
+│   - Error Handling                         │
+└───────────────┬────────────────────────────┘
+                │ PropertiesService
+┌───────────────▼────────────────────────────┐
+│   State Persistence Layer                  │
+│   - currentDir                             │
+│   - clipboard                              │
+│   - clipboardType                          │
+└───────────────┬────────────────────────────┘
+                │ DriveApp, FormsApp, etc.
+┌───────────────▼────────────────────────────┐
+│   Google Workspace APIs                    │
+│   - Drive API                              │
+│   - Forms API                              │
+│   - Sheets API                             │
+│   - Docs API                               │
+│   - Slides API                             │
+└────────────────────────────────────────────┘
 ```
 
 ### データフロー
 
 ```
-User Input → HTML (sanitize) → GAS (validate) → Drive API → Response → HTML (render)
+User Input → HTML (sanitize) 
+         → GAS (validate) 
+         → State Update 
+         → API Call 
+         → State Persist 
+         → Response 
+         → HTML (render)
 ```
 
-### 型システム
+### コマンド分類体系
 
-すべてのコマンド関数は以下の型シグネチャに従う:
+コマンド集合 $\mathcal{C}$ を以下の互いに素な部分集合に分割：
 
-```typescript
-type CommandFunction = (args: string[]) => CommandResult
+$$\mathcal{C} = \mathcal{C}_{\text{nav}} \cup \mathcal{C}_{\text{file}} \cup \mathcal{C}_{\text{meta}} \cup \mathcal{C}_{\text{share}} \cup \mathcal{C}_{\text{ui}} \cup \mathcal{C}_{\text{special}}$$
 
-interface CommandResult {
-  success: boolean;  // 処理の成功/失敗
-  output: string;    // ユーザーへの表示メッセージ
-}
-```
+ここで：
+- $\mathcal{C}_{\text{nav}} = \{\text{ls}, \text{pwd}, \text{cd}, \text{find}\}$
+- $\mathcal{C}_{\text{file}} = \{\text{new}, \text{rn}, \text{del}, \text{copy}, \text{paste}\}$
+- $\mathcal{C}_{\text{meta}} = \{\text{stat}, \text{url}, \text{open}\}$
+- $\mathcal{C}_{\text{share}} = \{\text{share}\}$
+- $\mathcal{C}_{\text{ui}} = \{\text{clear}, \text{reload}, \text{exit}, \text{color}\}$
+- $\mathcal{C}_{\text{special}} = \{\text{trash}, \text{clone}, \text{help}\}$
 
 ---
 
@@ -84,163 +189,613 @@ interface CommandResult {
 
 1. [Google Apps Script](https://script.google.com) にアクセス
 2. 「新しいプロジェクト」をクリック
-3. プロジェクト名を「Google Drive CLI」に変更
+3. プロジェクト名を「Google Drive CLI Extended」に変更
 
 ### ステップ2: ファイル追加
 
-**Code.gs (既存のCode.gsを置き換え)**
-- 提供された`Code.gs`の全内容をコピー＆ペースト
+**Code.gs**
+1. 既存のCode.gsを削除
+2. 提供された拡張版`Code.gs`の全内容をコピー＆ペースト
 
-**index.html (新規作成)**
+**index.html**
 1. 左側メニューの「+」→「HTML」をクリック
 2. ファイル名を「index」にする
-3. 提供された`index.html`の全内容をコピー＆ペースト
+3. 提供された拡張版`index.html`の全内容をコピー＆ペースト
 
 ### ステップ3: デプロイ
 
 1. 右上の「デプロイ」→「新しいデプロイ」をクリック
 2. 「種類の選択」→「ウェブアプリ」を選択
 3. 設定:
-   - **説明**: v1.0（任意）
+   - **説明**: v2.0 Extended
    - **次のユーザーとして実行**: 自分
    - **アクセスできるユーザー**: 自分のみ（推奨）
 4. 「デプロイ」をクリック
 
 ### ステップ4: 権限承認
 
-初回アクセス時:
-1. 「承認が必要です」ダイアログが表示される
-2. 「権限を確認」をクリック
-3. Googleアカウントを選択
-4. 「詳細」→「Google Drive CLI（安全ではないページ）に移動」をクリック
-5. 「許可」をクリック
-
-**要求される権限**:
+初回アクセス時、以下の権限が必要：
 - Google Driveのファイルとフォルダの表示、編集、作成、削除
+- Google Forms, Sheets, Docs, Slidesの作成・管理
+
+承認手順：
+1. 「承認が必要です」→「権限を確認」
+2. アカウント選択
+3. 「詳細」→「(安全ではないページ)に移動」
+4. 「許可」をクリック
 
 ### ステップ5: 動作確認
 
-デプロイURL（例: `https://script.google.com/macros/s/.../exec`）にアクセスし、以下を実行:
-
-```
+```bash
 > help
-> list
-> create test.txt
-> list
-> delete test.txt
+> ls
+> new test.txt file
+> stat test.txt
+> del test.txt
+> pwd
 ```
 
 ---
 
 ## コマンドリファレンス
 
-### `list` / `ls`
-**構文**: `list` または `ls`
+### ナビゲーションコマンド
 
-**機能**: ルートディレクトリのファイル一覧を表示
+#### `ls` / `ls tree`
+
+**構文**: 
+```
+ls              # 現在のディレクトリの内容を一覧表示
+ls tree         # ツリー構造で表示
+```
+
+**機能**: 
+- ファイルとフォルダを区別して表示
+- フォルダは `[name]` 形式で表示
+- 名前順にソート（フォルダ優先）
 
 **出力形式**:
 ```
-Found N file(s):
+Total: N item(s)
 
-NAME                          TYPE           SIZE        MODIFIED
---------------------------------------------------------------------------------
-example.txt                   plain          1.2 KB      2025-10-15 14:30
-document.pdf                  pdf            245.8 KB    2025-10-14 09:15
+NAME                               TYPE           SIZE        MODIFIED
+----------------------------------------------------------------------------------
+[Documents]                        DIR            -           2025-10-15 14:30
+[Photos]                           DIR            -           2025-10-14 09:15
+report.txt                         plain          1.2 KB      2025-10-13 16:45
 ```
 
-**出力項目**:
-- **NAME**: ファイル名（30文字まで表示、超過時は"..."で省略）
-- **TYPE**: MIMEタイプの拡張子部分
-- **SIZE**: 人間可読形式（B, KB, MB, GB, TB）
-- **MODIFIED**: 最終更新日時（YYYY-MM-DD HH:MM形式）
+**tree出力形式**:
+```
+root/
+├── Documents/
+│   ├── report.pdf
+│   └── notes.txt
+├── Photos/
+│   └── vacation.jpg
+└── archive.zip
+```
 
-**計算量**: O(n) - nはファイル数
+**計算量**: 
+- リスト表示: $O(n)$ where $n$ = アイテム数
+- ツリー表示: $O(n \cdot d)$ where $d$ = 最大深さ
 
 ---
 
-### `create <filename>`
-**構文**: `create <filename>`
+#### `pwd`
 
-**機能**: 指定名のテキストファイルを作成
+**構文**: `pwd`
 
-**引数**:
-- `<filename>`: 作成するファイル名（スペース含む可）
+**機能**: 現在の作業ディレクトリの絶対パスを表示
+
+**出力例**:
+```
+/Documents/Projects
+```
+
+**計算量**: $O(d)$ where $d$ = ディレクトリの深さ
+
+---
+
+#### `cd <path>`
+
+**構文**: 
+```
+cd <path>       # 指定パスに移動
+cd ..           # 親ディレクトリに移動
+cd /            # ルートに移動
+cd ~            # ルートに移動（エイリアス）
+```
+
+**機能**: カレントディレクトリを変更
 
 **例**:
 ```
-> create myfile.txt
-Created: myfile.txt
+> cd Documents
+Changed to: /Documents
+
+> cd ../
+Changed to: /
+
+> cd /Documents/Projects
+Changed to: /Documents/Projects
+```
+
+**エラーケース**:
+```
+> cd NonExistent
+Error: Folder 'NonExistent' not found
+
+> cd ..  (at root)
+Error: Already at root
+```
+
+**状態変化**: 
+$\text{currentDir}' = \begin{cases}
+\text{root} & \text{if path} = / \vee \text{path} = \sim \\
+\text{parent(currentDir)} & \text{if path} = .. \\
+\text{resolve(path)} & \text{otherwise}
+\end{cases}$
+
+---
+
+#### `find <name>`
+
+**構文**: `find <name>`
+
+**機能**: 現在のディレクトリで指定名に完全一致するアイテムを検索
+
+**出力例**:
+```
+> find report.txt
+Found (FILE): report.txt
+Path: /Documents/report.txt
 ID: 1a2b3c4d5e6f7g8h9i0j
-
-> create my document.txt
-Created: my document.txt
-ID: 9i8h7g6f5e4d3c2b1a0
 ```
 
-**エラーケース**:
-```
-> create
-Error: Filename required. Usage: create <filename>
+**計算量**: $O(n)$ where $n$ = 現在のディレクトリ内のアイテム数
 
-> create existing.txt
-Error: File 'existing.txt' already exists.
-```
-
-**技術詳細**:
-- MIMEタイプ: `text/plain`
-- 初期内容: 空文字列
-- 作成場所: ルートディレクトリ
+**注意**: 
+- 完全一致検索（大文字小文字区別なし）
+- サブディレクトリは検索しない
+- 最初に見つかったものを返す
 
 ---
 
-### `delete <filename>` / `rm <filename>`
-**構文**: `delete <filename>` または `rm <filename>`
+### ファイル操作コマンド
 
-**機能**: 指定ファイルをゴミ箱に移動（完全削除ではない）
+#### `new <name> <type>`
 
-**引数**:
-- `<filename>`: 削除するファイル名
+**構文**: `new <name> <type>`
+
+**サポートされるタイプ**:
+- `file` - プレーンテキストファイル
+- `dir` - フォルダ
+- `form` - Google Form
+- `sheet` - Google Spreadsheet
+- `docs` - Google Document
+- `slide` - Google Slides
+- `script` - Google Apps Script（未サポート）
+- `py` - Google Colab（未サポート）
 
 **例**:
 ```
-> delete myfile.txt
-Deleted: myfile.txt
+> new report.txt file
+Created file: report.txt
+ID: 1a2b3c4d5e6f7g8h9i0j
+URL: https://drive.google.com/file/d/...
 
-> rm old_document.pdf
-Deleted: old_document.pdf
+> new ProjectFolder dir
+Created dir: ProjectFolder
+ID: 9z8y7x6w5v4u3t2s1r0q
+URL: https://drive.google.com/drive/folders/...
+
+> new Survey form
+Created form: Survey
+ID: ...
+URL: https://docs.google.com/forms/d/...
 ```
 
-**同名ファイルが複数存在する場合**:
+**型対応表**:
+
+| Type   | MIME Type                              | API               |
+|--------|----------------------------------------|-------------------|
+| file   | text/plain                             | DriveApp          |
+| dir    | application/vnd.google-apps.folder     | DriveApp          |
+| form   | application/vnd.google-apps.form       | FormApp           |
+| sheet  | application/vnd.google-apps.spreadsheet| SpreadsheetApp    |
+| docs   | application/vnd.google-apps.document   | DocumentApp       |
+| slide  | application/vnd.google-apps.presentation| SlidesApp        |
+
+**注意**: 
+- Google Workspace形式のファイルは作成後、ルートから現在のディレクトリに移動される
+- 同名チェックは未実装（上書き注意）
+
+---
+
+#### `rn <old_name> <new_name>`
+
+**構文**: `rn <old_name> <new_name>`
+
+**機能**: ファイルまたはフォルダの名前を変更
+
+**例**:
 ```
-> delete duplicate.txt
-Deleted: duplicate.txt
-Warning: Multiple files with this name exist. Only the first one was deleted.
+> rn old.txt new.txt
+Renamed file: old.txt → new.txt
+
+> rn OldFolder NewFolder
+Renamed directory: OldFolder → NewFolder
+```
+
+**探索順序**:
+1. フォルダを先に検索
+2. フォルダが見つからない場合、ファイルを検索
+
+**エラーケース**:
+```
+> rn nonexistent.txt other.txt
+Error: 'nonexistent.txt' not found
+```
+
+---
+
+#### `del <name>`
+
+**構文**: `del <name>`
+
+**機能**: ファイルまたはフォルダをゴミ箱に移動（完全削除ではない）
+
+**例**:
+```
+> del test.txt
+Moved to trash: test.txt (FILE)
+
+> del OldFolder
+Moved to trash: OldFolder (DIR)
+```
+
+**重要**: 
+- ゴミ箱から復元可能（`trash <name> restore`コマンド使用）
+- 完全削除はGoogle Drive UIから手動で実行
+
+**探索順序**: rnコマンドと同様
+
+---
+
+#### `copy <name>`
+
+**構文**: `copy <name>`
+
+**機能**: ファイルまたはフォルダを内部クリップボードにコピー
+
+**例**:
+```
+> copy document.pdf
+Copied to clipboard: document.pdf (FILE)
+```
+
+**状態変化**:
+$\text{clipboard}' = (\text{ItemType}, \text{ItemId})$
+
+**注意**: 
+- フォルダのコピーはDrive API制限により完全にはサポートされない
+- セッション間で永続化される（PropertiesService使用）
+
+---
+
+#### `paste`
+
+**構文**: `paste`
+
+**機能**: クリップボードの内容を現在のディレクトリに貼り付け
+
+**例**:
+```
+> copy report.txt
+Copied to clipboard: report.txt (FILE)
+
+> cd ../Projects
+> paste
+Pasted file: report.txt
 ```
 
 **エラーケース**:
 ```
-> delete
-Error: Filename required. Usage: delete <filename>
-
-> delete nonexistent.txt
-Error: File 'nonexistent.txt' not found.
+> paste  (clipboard empty)
+Error: Clipboard is empty
 ```
 
-**重要**: ゴミ箱から復元可能
+**制限事項**: フォルダの貼り付けは未サポート
 
 ---
 
-### `help`
+### メタデータコマンド
+
+#### `stat <name>`
+
+**構文**: `stat <name>`
+
+**機能**: ファイルまたはフォルダの詳細メタデータを表示
+
+**出力例（ファイル）**:
+```
+=== File Statistics ===
+
+Name:       report.pdf
+ID:         1a2b3c4d5e6f7g8h9i0j
+Type:       application/pdf
+Size:       2.4 MB
+Created:    2025-10-01 10:30:00
+Modified:   2025-10-15 14:22:31
+Owner:      user@example.com
+URL:        https://drive.google.com/file/d/...
+Access:     PRIVATE (OWNER)
+```
+
+**出力例（フォルダ）**:
+```
+=== Directory Statistics ===
+
+Name:       Projects
+ID:         9z8y7x6w5v4u3t2s1r0q
+Created:    2025-09-15 09:00:00
+Modified:   2025-10-16 16:45:12
+Owner:      user@example.com
+URL:        https://drive.google.com/drive/folders/...
+Access:     DOMAIN (VIEW)
+```
+
+**表示項目**:
+- Name: アイテム名
+- ID: Google Drive固有ID
+- Type: MIMEタイプ（ファイルのみ）
+- Size: ファイルサイズ（ファイルのみ）
+- Created: 作成日時
+- Modified: 最終更新日時
+- Owner: 所有者のメールアドレス
+- URL: WebアクセスURL
+- Access: 共有設定（アクセスレベルと権限）
+
+**計算量**: $O(1)$ - 単一API呼び出し
+
+---
+
+#### `url <name>`
+
+**構文**: `url <name>`
+
+**機能**: ファイルまたはフォルダのURLを取得
+
+**出力例**:
+```
+> url report.pdf
+https://drive.google.com/file/d/1a2b3c4d5e6f7g8h9i0j/view
+```
+
+**用途**: 
+- URLをコピーして外部共有
+- ブラウザで直接開く
+
+---
+
+#### `open <name>`
+
+**構文**: `open <name>`
+
+**機能**: ファイルまたはフォルダを新しいタブで開く
+
+**動作**:
+```
+> open document.pdf
+Opening in new tab...
+```
+
+**内部動作**: 
+1. URLを取得
+2. `window.open(url, '_blank')` を実行
+3. ユーザーのブラウザで新タブが開く
+
+**ポップアップブロック注意**: ブラウザ設定で許可が必要な場合あり
+
+---
+
+### 共有コマンド
+
+#### `share <name> <email> <type>`
+
+**構文**: `share <name> <email> <type>`
+
+**権限タイプ**:
+- `view` - 閲覧のみ
+- `edit` - 編集可能
+- `comment` - コメント可能（Google Workspace形式のみ）
+
+**例**:
+```
+> share report.pdf user@example.com view
+Shared report.pdf with user@example.com (view)
+
+> share Spreadsheet colleague@company.com edit
+Shared Spreadsheet with colleague@company.com (edit)
+```
+
+**権限マトリクス**:
+
+| Type    | Can View | Can Edit | Can Comment | Can Share |
+|---------|----------|----------|-------------|-----------|
+| view    | ✓        | ✗        | ✗           | ✗         |
+| comment | ✓        | ✗        | ✓           | ✗         |
+| edit    | ✓        | ✓        | ✓           | ✓         |
+
+**エラーケース**:
+```
+> share nonexistent.txt user@example.com view
+Error: 'nonexistent.txt' not found
+
+> share file.txt invalid-email unknown
+Error: Unknown permission type 'unknown'
+```
+
+**セキュリティ注意**: 
+- メールアドレスの妥当性検証は最小限
+- 組織外共有は組織ポリシーに依存
+
+---
+
+### ゴミ箱コマンド
+
+#### `trash`
+
+**構文**: `trash`
+
+**機能**: ゴミ箱内のすべてのアイテムを一覧表示
+
+**出力例**:
+```
+Trash: 5 item(s)
+
+NAME                                    TYPE           TRASHED
+--------------------------------------------------------------------------------
+[OldProject]                            DIR            2025-10-10 11:20:00
+deleted_report.pdf                      pdf            2025-10-12 15:35:12
+temp.txt                                plain          2025-10-14 09:05:43
+```
+
+**注意**: 
+- すべてのユーザーのゴミ箱を表示（ルート権限不要）
+- 完全削除されたファイルは表示されない
+
+---
+
+#### `trash <name> restore`
+
+**構文**: `trash <name> restore`
+
+**機能**: ゴミ箱から指定アイテムを復元
+
+**例**:
+```
+> trash deleted_report.pdf restore
+Restored: deleted_report.pdf
+```
+
+**復元先**: 元の場所に復元される
+
+**エラーケース**:
+```
+> trash nonexistent.txt restore
+Error: 'nonexistent.txt' not found in trash
+```
+
+**計算量**: $O(n)$ where $n$ = ゴミ箱内のアイテム数
+
+---
+
+### UI制御コマンド
+
+#### `clear`
+
+**構文**: `clear`
+
+**機能**: ターミナル画面をクリア
+
+**動作**: DOMから全出力要素を削除
+
+**用途**: 画面が見づらくなった時のリフレッシュ
+
+---
+
+#### `reload`
+
+**構文**: `reload`
+
+**機能**: ページを再読み込み
+
+**動作**: `location.reload()` を実行
+
+**用途**: 
+- 状態のリセット
+- UI不具合の解消
+
+---
+
+#### `exit`
+
+**構文**: `exit`
+
+**機能**: ブラウザタブを閉じる
+
+**動作**: 
+1. "Closing..." メッセージを表示
+2. 1秒後に `window.close()` を実行
+
+**注意**: ユーザー操作で開いたタブでない場合、閉じられない可能性あり
+
+---
+
+#### `color <color>`
+
+**構文**: `color <color>`
+
+**サポートされる色**:
+- white
+- blue
+- green
+- red
+- yellow
+- cyan
+- magenta
+- black
+
+**例**:
+```
+> color green
+Color changed to green
+```
+
+**動作**: 以降のすべての出力テキストが指定色で表示される
+
+**リセット**: ページをリロードするまで持続
+
+**CSS実装**:
+```css
+.color-green { color: #4ec9b0 !important; }
+```
+
+---
+
+### 特殊コマンド
+
+#### `clone <URL>`
+
+**構文**: `clone <URL>`
+
+**機能**: （未実装）Gitリポジトリのクローン
+
+**現状**: 
+```
+> clone https://github.com/user/repo
+Error: Git clone not supported in Google Drive environment
+```
+
+**理由**: Google Driveはバージョン管理システムではないため
+
+**代替案**: Google Drive REST APIを使用した外部スクリプト
+
+---
+
+#### `help`
+
 **構文**: `help`
 
-**機能**: 利用可能なコマンドの一覧と使用例を表示
+**機能**: 全コマンドのリファレンスを表示
 
-**出力内容**:
-- 実装済みコマンド
-- 各コマンドの簡単な説明
+**出力**: 
+- コマンド分類
+- 各コマンドの構文
 - 使用例
-- 将来実装予定のコマンド
+- 注意事項
 
 ---
 
@@ -248,1423 +803,943 @@ Error: File 'nonexistent.txt' not found.
 
 ### バックエンド (Code.gs)
 
-#### 関数: `doGet()`
-**役割**: エントリーポイント。HTMLを返す
+#### 状態管理システム
 
-**返り値**: `HtmlOutput` オブジェクト
+**PropertiesServiceによる永続化**:
 
-**セキュリティ設定**:
-- `XFrameOptionsMode.ALLOWALL`: iframe埋め込み許可
+```javascript
+function getState() {
+  const props = PropertiesService.getUserProperties();
+  return {
+    currentDir: props.getProperty('currentDir') || 'root',
+    clipboard: props.getProperty('clipboard') || null,
+    clipboardType: props.getProperty('clipboardType') || null
+  };
+}
+
+function setState(key, value) {
+  PropertiesService.getUserProperties().setProperty(key, value);
+}
+```
+
+**数学的定義**:
+
+状態取得関数: $\text{getState}: \emptyset \rightarrow S$
+
+状態設定関数: $\text{setState}: K \times V \rightarrow \emptyset$
+
+where $K$ = キー集合, $V$ = 値集合
+
+**永続化スコープ**: ユーザー単位（他のユーザーと共有されない）
 
 ---
 
-#### 関数: `processCommand(commandLine)`
-**役割**: コマンド処理のメインハンドラ
+#### カレントディレクトリ管理
 
-**処理フロー**:
-1. 入力の正規化（trim、空白圧縮）
-2. コマンドと引数に分割
-3. コマンドマップによるルーティング
-4. エラーハンドリング
+```javascript
+function getCurrentFolder() {
+  const state = getState();
+  return state.currentDir === 'root' 
+    ? DriveApp.getRootFolder() 
+    : DriveApp.getFolderById(state.currentDir);
+}
+```
 
-**引数**:
-- `commandLine` (string): ユーザー入力の生の文字列
+**型シグネチャ**: 
+$\text{getCurrentFolder}: \emptyset \rightarrow \text{Folder}$
 
-**返り値**: `CommandResult` オブジェクト
+**例外処理**: 無効なFolderIdの場合、ルートにフォールバック
 
-**ルーティングテーブル**:
+---
+
+#### パス構築アルゴリズム
+
+```javascript
+function buildPath(folder) {
+  const parts = [];
+  let current = folder;
+  
+  while (true) {
+    parts.unshift(current.getName());
+    const parents = current.getParents();
+    if (!parents.hasNext()) break;
+    current = parents.next();
+  }
+  
+  return '/' + parts.join('/');
+}
+```
+
+**計算量**: $O(d)$ where $d$ = ディレクトリの深さ
+
+**再帰的定義**:
+$\text{buildPath}(f) = \begin{cases}
+/ + f.\text{name} & \text{if } f.\text{parent} = \emptyset \\
+\text{buildPath}(f.\text{parent}) + / + f.\text{name} & \text{otherwise}
+\end{cases}$
+
+---
+
+#### コマンド処理パイプライン
+
+```
+Input → Normalize → Parse → Route → Execute → Persist → Output
+```
+
+**正規化**: 
+- トリミング: 前後空白削除
+- 圧縮: 連続空白を単一空白に
+
+```javascript
+const normalized = commandLine.trim().replace(/\s+/g, ' ');
+```
+
+**パース**: 
+```javascript
+const parts = normalized.split(' ');
+const command = parts[0].toLowerCase();
+const args = parts.slice(1);
+```
+
+**ルーティング**: ハッシュマップによる $O(1)$ 探索
 ```javascript
 const commandMap = {
-  'list': cmdList,
-  'ls': cmdList,      // エイリアス
-  'create': cmdCreate,
-  'delete': cmdDelete,
-  'rm': cmdDelete,    // エイリアス
-  'help': cmdHelp
+  'ls': cmdLs,
+  'cd': cmdCd,
+  // ... 全27コマンド
 };
 ```
 
 ---
 
-#### 関数: `cmdList(args)`
-**アルゴリズム**:
-1. `DriveApp.getRootFolder().getFiles()` でイテレータ取得
-2. 各ファイルのメタデータ収集:
-   - 名前
-   - MIMEタイプ
-   - サイズ
-   - 最終更新日時
-3. テーブル形式に整形
+#### ツリー構造生成アルゴリズム
 
-**メモリ効率**: O(n) - n個のファイルメタデータを配列に格納
-
-**日時フォーマット**:
 ```javascript
-Utilities.formatDate(
-  file.getLastUpdated(),
-  Session.getScriptTimeZone(),
-  'yyyy-MM-dd HH:mm'
-)
+function buildTree(folder, prefix, isLast) {
+  let output = prefix + (isLast ? '└── ' : '├── ') + folder.getName() + '/\n';
+  
+  const subfolders = getFoldersArray(folder);
+  const files = getFilesArray(folder);
+  const totalItems = subfolders.length + files.length;
+  
+  let count = 0;
+  
+  subfolders.forEach(subfolder => {
+    count++;
+    const newPrefix = prefix + (isLast ? '    ' : '│   ');
+    output += buildTree(subfolder, newPrefix, count === totalItems);
+  });
+  
+  files.forEach(file => {
+    count++;
+    output += prefix + (isLast ? '    ' : '│   ') + 
+              (count === totalItems ? '└── ' : '├── ') + 
+              file.getName() + '\n';
+  });
+  
+  return output;
+}
 ```
 
----
+**アルゴリズム分類**: 深さ優先探索 (DFS)
 
-#### 関数: `cmdCreate(args)`
-**バリデーション**:
-1. 引数の存在チェック
-2. 同名ファイルの存在チェック
+**計算量**: 
+- 時間: $O(n \cdot d)$ where $n$ = ノード数, $d$ = 平均深さ
+- 空間: $O(d)$ (再帰スタック)
 
-**ファイル作成**:
-```javascript
-DriveApp.getRootFolder().createFile(
-  filename,
-  '',  // 空の内容
-  MimeType.PLAIN_TEXT
-)
-```
-
-**拡張可能性**: 拡張子によるMIMEタイプ判定が可能
-```javascript
-const extension = filename.split('.').pop().toLowerCase();
-const mimeTypeMap = {
-  'txt': MimeType.PLAIN_TEXT,
-  'html': MimeType.HTML,
-  'csv': MimeType.CSV
-};
-```
-
----
-
-#### 関数: `cmdDelete(args)`
-**削除方法**: `file.setTrashed(true)` - ゴミ箱に移動
-
-**同名ファイル処理**:
-- `FileIterator`から最初の1つのみを削除
-- 複数存在する場合は警告メッセージを表示
-
----
-
-#### ユーティリティ関数
-
-**`formatBytes(bytes)`**
-- 対数計算による単位判定: `i = floor(log₁₀₂₄(bytes))`
-- 単位配列: `['B', 'KB', 'MB', 'GB', 'TB']`
-
-**`padRight(str, width)`**
-- 文字列が`width`を超える場合: `substring(0, width-3) + '...'`
-- 不足する場合: スペースで右パディング
+**制限**: ファイル数上限50（無限ループ防止）
 
 ---
 
 ### フロントエンド (index.html)
 
 #### 状態管理
+
 ```javascript
 const state = {
-  commandHistory: [],    // コマンド履歴の配列
-  historyIndex: -1,      // 現在の履歴位置
-  isProcessing: false    // 処理中フラグ
+  commandHistory: [],      // 型: String[]
+  historyIndex: -1,        // 型: Int, 範囲: [-1, |commandHistory|]
+  isProcessing: false,     // 型: Bool
+  currentPath: '/',        // 型: String
+  theme: 'dark',           // 型: 'dark' | 'light'
+  textColor: null          // 型: Color | null
 };
 ```
 
 **不変条件**:
-- `0 ≤ historyIndex ≤ commandHistory.length`
-- `isProcessing === true` の間は入力を無効化
+1. $-1 \leq \text{historyIndex} \leq |\text{commandHistory}|$
+2. $\text{isProcessing} = \text{true} \Rightarrow \text{commandInput.disabled} = \text{true}$
+3. $\text{theme} \in \{\text{dark}, \text{light}\}$
 
 ---
 
-#### イベントハンドリング
+#### テーマ管理システム
 
-**Enterキー**: コマンド実行
+**localStorage統合**:
 ```javascript
-if (e.key === 'Enter') {
-  e.preventDefault();
-  handleCommand();
+function toggleTheme() {
+  state.theme = state.theme === 'dark' ? 'light' : 'dark';
+  document.body.setAttribute('data-theme', state.theme);
+  localStorage.setItem('theme', state.theme);
 }
-```
 
-**↑キー**: 履歴を遡る
-```javascript
-if (e.key === 'ArrowUp') {
-  e.preventDefault();
-  if (state.historyIndex > 0) {
-    state.historyIndex--;
-    commandInput.value = state.commandHistory[state.historyIndex];
+function loadTheme() {
+  const savedTheme = localStorage.getItem('theme');
+  if (savedTheme) {
+    state.theme = savedTheme;
+    document.body.setAttribute('data-theme', state.theme);
   }
 }
 ```
 
-**↓キー**: 履歴を進む
+**CSS変数によるテーマ切り替え**:
+```css
+body[data-theme="dark"] {
+  background-color: #1e1e1e;
+  color: #d4d4d4;
+}
+
+body[data-theme="light"] {
+  background-color: #ffffff;
+  color: #000000;
+}
+```
+
+**永続化**: ブラウザセッション間で保持
+
+---
+
+#### コマンド履歴ナビゲーション
+
+**状態遷移図**:
+```
+          ↑ key
+    ┌──────────────┐
+    │ historyIndex │
+    │ decrements   │
+    └──────────────┘
+           │
+           ▼
+    [cmd0, cmd1, cmd2, ...]
+           ▲
+           │
+    ┌──────────────┐
+    │ historyIndex │
+    │ increments   │
+    └──────────────┘
+          ↓ key
+```
+
+**実装**:
 ```javascript
-if (e.key === 'ArrowDown') {
-  e.preventDefault();
-  if (state.historyIndex < state.commandHistory.length - 1) {
-    state.historyIndex++;
-    commandInput.value = state.commandHistory[state.historyIndex];
-  } else {
-    state.historyIndex = state.commandHistory.length;
-    commandInput.value = '';
+function navigateHistory(direction) {
+  if (state.commandHistory.length === 0) return;
+  
+  if (direction === 'up') {
+    if (state.historyIndex > 0) {
+      state.historyIndex--;
+      commandInput.value = state.commandHistory[state.historyIndex];
+    }
+  } else if (direction === 'down') {
+    if (state.historyIndex < state.commandHistory.length - 1) {
+      state.historyIndex++;
+      commandInput.value = state.commandHistory[state.historyIndex];
+    } else {
+      state.historyIndex = state.commandHistory.length;
+      commandInput.value = '';
+    }
   }
 }
 ```
 
+**境界条件**:
+- 上限: $\text{historyIndex} = 0$（最古）
+- 下限: $\text{historyIndex} = |\text{commandHistory}|$（空入力）
+
 ---
 
-#### 非同期通信
+#### 非同期RPC処理
 
-**成功ハンドラ**:
+**Promiseチェーン（内部）**:
 ```javascript
 google.script.run
-  .withSuccessHandler((result) => {
-    // ローディング表示を削除
-    // 結果を表示
-    // 入力をリセット
-  })
+  .withSuccessHandler(handleSuccess)
+  .withFailureHandler(handleError)
   .processCommand(command);
 ```
 
-**失敗ハンドラ**:
-```javascript
-.withFailureHandler((error) => {
-  // エラーメッセージを表示
-  // 入力をリセット
-})
+**型シグネチャ**:
+```typescript
+type RPCCall = (command: string) => Promise<CommandResult>
 ```
 
-**タイムアウト**: GASの制限により最大6分（実際はもっと短い）
+**タイムアウト**: GASの実行時間制限（最大6分）
+
+**エラーハンドリング**:
+- ネットワークエラー
+- GASランタイムエラー
+- 権限エラー
 
 ---
 
-#### セキュリティ: XSS対策
+#### XSS対策
 
-**`escapeHtml(text)` 関数**:
+**エスケープ関数**:
 ```javascript
 function escapeHtml(text) {
   const div = document.createElement('div');
-  div.textContent = text;  // textContentは自動エスケープ
+  div.textContent = text;  // 自動エスケープ
   return div.innerHTML;
 }
 ```
 
 **原理**: `textContent`への代入はHTMLタグをエスケープする
 
+**テストケース**:
+```javascript
+escapeHtml('<script>alert("XSS")</script>')
+// => "&lt;script&gt;alert("XSS")&lt;/script&gt;"
+```
+
 **使用箇所**: すべてのユーザー入力と外部データ
 
 ---
 
-#### UI更新の効率性
+#### Ctrl+C インタラプト
 
-**DOM操作**: `appendChild` のみ使用
-- リフローを最小化
-- 既存要素の再計算なし
-
-**スクロール**: `scrollTop = scrollHeight` で最下部へ
-- 計算量: O(1)
-
----
-
-## 拡張ガイド
-
-### 新規コマンド追加の標準手順
-
-#### ステップ1: コマンド関数の実装 (Code.gs)
-
+**実装**:
 ```javascript
-/**
- * 新規コマンドのテンプレート
- * @param {Array<string>} args - コマンド引数
- * @return {Object} CommandResult
- */
-function cmdYourCommand(args) {
-  try {
-    // 1. 引数のバリデーション
-    if (args.length < 必要な引数数) {
-      return {
-        success: false,
-        output: 'Error: Usage: yourcommand <arg1> <arg2>'
-      };
-    }
-    
-    // 2. Drive API操作
-    const result = DriveApp.someOperation();
-    
-    // 3. 成功レスポンス
-    return {
-      success: true,
-      output: `Success message: ${result}`
-    };
-    
-  } catch (error) {
-    // 4. エラーハンドリング
-    return {
-      success: false,
-      output: `Error: ${error.message}`
-    };
+commandInput.addEventListener('keydown', (e) => {
+  if (e.ctrlKey && e.key === 'c') {
+    e.preventDefault();
+    handleInterrupt();
+  }
+});
+
+function handleInterrupt() {
+  if (state.isProcessing) {
+    appendOutput('<span class="error">^C (interrupted - note: cannot stop GAS execution)</span>');
+  } else {
+    appendOutput('<span class="error">^C</span>');
+    commandInput.value = '';
   }
 }
 ```
 
-#### ステップ2: コマンドマップへの登録
+**制限**: GAS実行中のコマンドは停止不可（サーバーサイド実行のため）
 
-```javascript
-const commandMap = {
-  'list': cmdList,
-  'create': cmdCreate,
-  'delete': cmdDelete,
-  'help': cmdHelp,
-  'yourcommand': cmdYourCommand,  // 追加
-  'yc': cmdYourCommand            // エイリアス（任意）
-};
+**用途**: 入力のクリア、視覚的フィードバック
+
+---
+
+## 状態管理
+
+### 永続化戦略
+
+**PropertiesService仕様**:
+- スコープ: ユーザー単位
+- 容量制限: 9KB（キー＋値）
+- 保存期間: 無期限（ユーザーが削除するまで）
+
+**キー設計**:
+| キー           | 型     | 説明                     |
+|----------------|--------|--------------------------|
+| currentDir     | String | 現在のディレクトリID      |
+| clipboard      | String | クリップボードアイテムID  |
+| clipboardType  | String | "file" または "folder"   |
+
+**データフロー**:
+```
+GAS Command → setState(key, value) 
+          → PropertiesService.setProperty(key, value)
+          → Persistent Storage
 ```
 
-#### ステップ3: ヘルプの更新
-
-```javascript
-function cmdHelp(args) {
-  const helpText = `
-Available Commands:
--------------------
-...
-yourcommand <args>    Description of your command
-yc <args>             Alias for yourcommand
-...
-`;
-  return {success: true, output: helpText};
-}
+**取得**:
+```
+GAS Command → getState() 
+          → PropertiesService.getProperty(key)
+          → Memory
 ```
 
 ---
 
-### 実装例1: `pwd` コマンド（カレントディレクトリ表示）
+### セッション管理
 
-```javascript
-/**
- * pwd: カレントディレクトリを表示
- */
-function cmdPwd(args) {
-  try {
-    const props = PropertiesService.getUserProperties();
-    const currentDirId = props.getProperty('currentDir') || 'root';
-    
-    let path = '/';
-    if (currentDirId !== 'root') {
-      const folder = DriveApp.getFolderById(currentDirId);
-      path = '/' + folder.getName();
-    }
-    
-    return {
-      success: true,
-      output: `Current directory: ${path}\nID: ${currentDirId}`
-    };
-    
-  } catch (error) {
-    return {
-      success: false,
-      output: `Error: ${error.message}`
-    };
-  }
-}
+**フロントエンド状態**: ブラウザメモリ（揮発性）
+- commandHistory
+- historyIndex
+- isProcessing
+- theme (localStorageに永続化)
+- textColor
 
-// commandMapに追加
-'pwd': cmdPwd
-```
+**バックエンド状態**: PropertiesService（永続性）
+- currentDir
+- clipboard
+- clipboardType
 
----
-
-### 実装例2: `cd` コマンド（ディレクトリ移動）
-
-```javascript
-/**
- * cd: ディレクトリを変更
- * @param {Array<string>} args - [0]: フォルダ名 or '..' or '/'
- */
-function cmdCd(args) {
-  if (args.length === 0) {
-    return {
-      success: false,
-      output: 'Error: Usage: cd <foldername> | cd .. | cd /'
-    };
-  }
-  
-  try {
-    const props = PropertiesService.getUserProperties();
-    const target = args[0];
-    
-    // ルートに移動
-    if (target === '/') {
-      props.setProperty('currentDir', 'root');
-      return {success: true, output: 'Changed to root directory'};
-    }
-    
-    // 親ディレクトリに移動
-    if (target === '..') {
-      const currentDirId = props.getProperty('currentDir') || 'root';
-      if (currentDirId === 'root') {
-        return {success: false, output: 'Error: Already at root'};
-      }
-      
-      const currentFolder = DriveApp.getFolderById(currentDirId);
-      const parents = currentFolder.getParents();
-      
-      if (parents.hasNext()) {
-        const parent = parents.next();
-        props.setProperty('currentDir', parent.getId());
-        return {success: true, output: `Changed to: ${parent.getName()}`};
-      } else {
-        props.setProperty('currentDir', 'root');
-        return {success: true, output: 'Changed to root directory'};
-      }
-    }
-    
-    // 指定フォルダに移動
-    const currentDirId = props.getProperty('currentDir') || 'root';
-    const currentFolder = currentDirId === 'root' 
-      ? DriveApp.getRootFolder() 
-      : DriveApp.getFolderById(currentDirId);
-    
-    const folders = currentFolder.getFoldersByName(target);
-    
-    if (!folders.hasNext()) {
-      return {
-        success: false,
-        output: `Error: Folder '${target}' not found`
-      };
-    }
-    
-    const folder = folders.next();
-    props.setProperty('currentDir', folder.getId());
-    
-    return {
-      success: true,
-      output: `Changed to: ${folder.getName()}`
-    };
-    
-  } catch (error) {
-    return {
-      success: false,
-      output: `Error: ${error.message}`
-    };
-  }
-}
-
-// commandMapに追加
-'cd': cmdCd
-```
-
-**カレントディレクトリの永続化**:
-- `PropertiesService.getUserProperties()` を使用
-- キー: `'currentDir'`
-- 値: フォルダID（または 'root'）
-
----
-
-### 実装例3: `mkdir` コマンド（フォルダ作成）
-
-```javascript
-/**
- * mkdir: 新規フォルダを作成
- */
-function cmdMkdir(args) {
-  if (args.length === 0) {
-    return {
-      success: false,
-      output: 'Error: Usage: mkdir <foldername>'
-    };
-  }
-  
-  const folderName = args.join(' ');
-  
-  try {
-    const props = PropertiesService.getUserProperties();
-    const currentDirId = props.getProperty('currentDir') || 'root';
-    const currentFolder = currentDirId === 'root'
-      ? DriveApp.getRootFolder()
-      : DriveApp.getFolderById(currentDirId);
-    
-    // 同名フォルダチェック
-    const existing = currentFolder.getFoldersByName(folderName);
-    if (existing.hasNext()) {
-      return {
-        success: false,
-        output: `Error: Folder '${folderName}' already exists`
-      };
-    }
-    
-    const folder = currentFolder.createFolder(folderName);
-    
-    return {
-      success: true,
-      output: `Created folder: ${folderName}\nID: ${folder.getId()}`
-    };
-    
-  } catch (error) {
-    return {
-      success: false,
-      output: `Error: ${error.message}`
-    };
-  }
-}
-
-// commandMapに追加
-'mkdir': cmdMkdir
-```
-
----
-
-### 実装例4: `cat` コマンド（ファイル内容表示）
-
-```javascript
-/**
- * cat: ファイル内容を表示
- */
-function cmdCat(args) {
-  if (args.length === 0) {
-    return {
-      success: false,
-      output: 'Error: Usage: cat <filename>'
-    };
-  }
-  
-  const filename = args.join(' ');
-  
-  try {
-    const props = PropertiesService.getUserProperties();
-    const currentDirId = props.getProperty('currentDir') || 'root';
-    const currentFolder = currentDirId === 'root'
-      ? DriveApp.getRootFolder()
-      : DriveApp.getFolderById(currentDirId);
-    
-    const files = currentFolder.getFilesByName(filename);
-    
-    if (!files.hasNext()) {
-      return {
-        success: false,
-        output: `Error: File '${filename}' not found`
-      };
-    }
-    
-    const file = files.next();
-    const mimeType = file.getMimeType();
-    
-    // テキストファイルのみサポート
-    if (!mimeType.startsWith('text/') && 
-        mimeType !== MimeType.GOOGLE_DOCS) {
-      return {
-        success: false,
-        output: `Error: Cannot display binary file (${mimeType})`
-      };
-    }
-    
-    let content;
-    if (mimeType === MimeType.GOOGLE_DOCS) {
-      content = file.getAs('text/plain').getDataAsString();
-    } else {
-      content = file.getBlob().getDataAsString();
-    }
-    
-    // 内容が長すぎる場合は制限
-    const maxLength = 5000;
-    if (content.length > maxLength) {
-      content = content.substring(0, maxLength) + 
-                '\n\n... (truncated, ' + 
-                (content.length - maxLength) + 
-                ' more characters)';
-    }
-    
-    return {
-      success: true,
-      output: `=== ${filename} ===\n\n${content}`
-    };
-    
-  } catch (error) {
-    return {
-      success: false,
-      output: `Error: ${error.message}`
-    };
-  }
-}
-
-// commandMapに追加
-'cat': cmdCat
-```
-
----
-
-### カレントディレクトリ対応への完全移行
-
-既存の`list`, `create`, `delete`コマンドをカレントディレクトリ対応にする:
-
-```javascript
-// ヘルパー関数: 現在のフォルダを取得
-function getCurrentFolder() {
-  const props = PropertiesService.getUserProperties();
-  const currentDirId = props.getProperty('currentDir') || 'root';
-  
-  return currentDirId === 'root'
-    ? DriveApp.getRootFolder()
-    : DriveApp.getFolderById(currentDirId);
-}
-
-// cmdListを修正
-function cmdList(args) {
-  try {
-    const currentFolder = getCurrentFolder();  // 変更点
-    const files = currentFolder.getFiles();
-    // 以下同じ...
-  }
-}
-
-// cmdCreateを修正
-function cmdCreate(args) {
-  // ...
-  const currentFolder = getCurrentFolder();  // 変更点
-  const file = currentFolder.createFile(filename, '', MimeType.PLAIN_TEXT);
-  // ...
-}
-
-// cmdDeleteを修正
-function cmdDelete(args) {
-  // ...
-  const currentFolder = getCurrentFolder();  // 変更点
-  const files = currentFolder.getFilesByName(filename);
-  // ...
-}
-```
-
----
-
-### HTML側の拡張（プロンプト表示の動的化）
-
-カレントディレクトリをプロンプトに表示する:
-
-```javascript
-// Code.gsに追加
-function getCurrentPath() {
-  const props = PropertiesService.getUserProperties();
-  const currentDirId = props.getProperty('currentDir') || 'root';
-  
-  if (currentDirId === 'root') {
-    return '~';
-  }
-  
-  try {
-    const folder = DriveApp.getFolderById(currentDirId);
-    return '~/' + folder.getName();
-  } catch (error) {
-    return '~';
-  }
-}
-```
-
-```javascript
-// index.htmlのhandleCommandを修正
-function handleCommand() {
-  const command = commandInput.value.trim();
-  if (!command) return;
-  
-  // 現在のパスを取得してプロンプトに表示
-  google.script.run
-    .withSuccessHandler((path) => {
-      appendOutput(`<span class="prompt">drive@${path}$</span> <span class="command">${escapeHtml(command)}</span>`);
-      
-      // コマンド処理を実行
-      google.script.run
-        .withSuccessHandler(handleSuccess)
-        .withFailureHandler(handleError)
-        .processCommand(command);
-    })
-    .getCurrentPath();
-  
-  commandInput.value = '';
-  commandInput.disabled = true;
-}
-```
+**同期**: 各コマンド実行時にバックエンド状態を取得・更新
 
 ---
 
 ## トラブルシューティング
 
-### 問題1: "承認が必要です"と表示される
+### 問題1: コマンドが実行されない
 
-**原因**: スクリプトがDrive APIへのアクセス権限を持っていない
+**症状**: Enterキーを押しても何も起こらない
+
+**原因と解決策**:
+
+1. **JavaScriptが無効**
+   - ブラウザ設定でJavaScriptを有効化
+   - 確認: F12 → Console に "Uncaught ReferenceError" が表示される
+
+2. **google.script.runが未定義**
+   - GASデプロイURLから直接アクセスしているか確認
+   - ローカルHTMLファイルでは動作しない
+
+3. **処理中フラグが立ったまま**
+   - ページをリロード (`reload`コマンド)
+   - F12 → Console で `state.isProcessing` を確認
+
+---
+
+### 問題2: "Error: Unknown command"
+
+**症状**: 有効なコマンドなのにエラーが出る
+
+**原因と解決策**:
+
+1. **大文字小文字の違い**
+   - すべてのコマンドは小文字で実装
+   - `LS` → `ls`, `CD` → `cd`
+
+2. **スペルミス**
+   - `help`コマンドで正しいスペルを確認
+
+3. **コマンドが未実装**
+   - `clone`, `script`, `py`コマンドは部分的に未サポート
+
+---
+
+### 問題3: "Error: File 'X' not found"
+
+**原因と解決策**:
+
+1. **ファイル名の大文字小文字**
+   - `find`コマンドは大文字小文字を区別しない
+   - 他のコマンドは区別する可能性あり
+
+2. **カレントディレクトリが違う**
+   - `pwd`で現在位置を確認
+   - `ls`で現在のファイル一覧を確認
+
+3. **ファイルがゴミ箱にある**
+   - `trash`コマンドで確認
+   - `trash <name> restore`で復元
+
+---
+
+### 問題4: 権限エラー
+
+**症状**: "Error: You do not have permission to access this file"
+
+**原因と解決策**:
+
+1. **ファイルの所有者でない**
+   - `stat <name>`で所有者を確認
+   - 所有者に権限付与を依頼
+
+2. **スクリプトの実行権限が不足**
+   - GASエディタ → デプロイ → 設定 → "次のユーザーとして実行: 自分"に設定
+
+3. **組織ポリシーによる制限**
+   - Google Workspace管理者に確認
+
+---
+
+### 問題5: パフォーマンスが遅い
+
+**原因と解決策**:
+
+1. **ファイル数が多い**
+   - `ls tree`は大量のファイルで遅延
+   - サブディレクトリに分割
+
+2. **GASの実行時間制限**
+   - 1回の実行は最大6分
+   - 大量のファイル操作は分割実行
+
+3. **キャッシュ未使用**
+   - 現在未実装
+   - 拡張案: CacheServiceの利用
+
+---
+
+### 問題6: "Clipboard is empty"
+
+**原因**: `copy`コマンドを実行していない
 
 **解決策**:
-1. 「承認が必要です」をクリック
-2. 「権限を確認」→ アカウント選択
-3. 「詳細」→ 「(プロジェクト名)（安全ではないページ）に移動」
-4. 「許可」をクリック
-
----
-
-### 問題2: コマンドが実行されない
-
-**チェックリスト**:
-- ブラウザのJavaScriptが有効か確認
-- デベロッパーツール（F12）でエラーを確認
-- GASエディタの「実行ログ」を確認
-
-**デバッグ方法**:
-```javascript
-// Code.gsにログ追加
-function processCommand(commandLine) {
-  Logger.log('Received command: ' + commandLine);
-  // ...
-}
+```bash
+> copy document.pdf
+> cd target_folder
+> paste
 ```
 
-実行後、GASエディタの「実行数」→「ログを表示」で確認
+**注意**: クリップボードはセッション間で永続化される
 
 ---
 
-### 問題3: ファイルが見つからない
+### 問題7: テーマが保存されない
 
-**原因**: 
-- 異なるGoogleアカウントでログインしている
-- ファイルが共有ドライブにある
+**原因**: localStorageが無効
 
-**確認**:
-```javascript
-// 実行ユーザーを確認
-function checkUser() {
-  return Session.getActiveUser().getEmail();
-}
-```
-
----
-
-### 問題4: "ReferenceError: google is not defined"
-
-**原因**: `google.script.run`がローカル環境では動作しない
-
-**解決策**: 必ずGASのデプロイURLからアクセスする
-
----
-
-### 問題5: レスポンスが遅い
-
-**原因**: 
-- ファイル数が多い（listコマンド）
-- GASの実行時間制限
-
-**対策**:
-```javascript
-// listコマンドにページネーション追加
-function cmdList(args) {
-  const maxFiles = 100;
-  let count = 0;
-  
-  while (files.hasNext() && count < maxFiles) {
-    const file = files.next();
-    fileList.push(/* ... */);
-    count++;
-  }
-  
-  if (files.hasNext()) {
-    output += '\n(More files exist. Showing first ' + maxFiles + ')';
-  }
-  
-  return {success: true, output: output};
-}
-```
-
----
-
-### 問題6: "Service invoked too many times"
-
-**原因**: GASの1日あたりの実行回数制限を超えた
-
-**制限**:
-- 無料アカウント: 1日あたり20,000回
-- Google Workspace: 1日あたり100,000回
-
-**対策**: 頻繁な操作を避ける、キャッシュを利用する
+**解決策**:
+1. ブラウザ設定でCookieとサイトデータを許可
+2. プライベートモードでは永続化されない
 
 ---
 
 ## パフォーマンス最適化
 
-### 最適化1: ファイルリストのキャッシュ
+### API呼び出し削減
 
+**現在の実装**: 
+- `ls`: $O(n)$ API呼び出し
+- `ls tree`: $O(n \cdot d)$ API呼び出し
+
+**最適化案**:
 ```javascript
-// CacheServiceを利用（最大6時間保持）
-function cmdList(args) {
+// CacheServiceの利用
+function cmdLsCached(args) {
   const cache = CacheService.getUserCache();
-  const cacheKey = 'fileList';
+  const cacheKey = 'ls_' + getState().currentDir;
   
-  // キャッシュから取得を試みる
   let cached = cache.get(cacheKey);
   if (cached && !args.includes('refresh')) {
     return {success: true, output: cached};
   }
   
-  // キャッシュミス: Drive APIから取得
-  const files = getCurrentFolder().getFiles();
-  const fileList = [];
+  // 通常のls処理
+  const output = generateLsOutput();
   
-  while (files.hasNext()) {
-    const file = files.next();
-    fileList.push({
-      name: file.getName(),
-      type: file.getMimeType().split('/').pop(),
-      size: formatBytes(file.getSize()),
-      modified: Utilities.formatDate(file.getLastUpdated(), 
-                                     Session.getScriptTimeZone(), 
-                                     'yyyy-MM-dd HH:mm')
-    });
-  }
-  
-  // 出力を整形
-  let output = /* 前述の整形処理 */;
-  
-  // キャッシュに保存（10分間）
+  // 10分間キャッシュ
   cache.put(cacheKey, output, 600);
   
   return {success: true, output: output};
 }
 ```
 
-**使用方法**:
-- `list`: キャッシュから取得
-- `list refresh`: 強制的に最新データを取得
+**効果**: 同じディレクトリへの連続アクセスで高速化
 
 ---
 
-### 最適化2: バッチ処理
+### バッチ処理
 
-複数ファイル操作を一度に処理:
-
+**複数ファイル操作の最適化**:
 ```javascript
-/**
- * delete-batch: 複数ファイルを一括削除
- * Usage: delete-batch file1.txt file2.txt file3.txt
- */
 function cmdDeleteBatch(args) {
-  if (args.length === 0) {
-    return {
-      success: false,
-      output: 'Error: Usage: delete-batch <file1> <file2> ...'
-    };
-  }
-  
-  const currentFolder = getCurrentFolder();
-  const results = [];
-  
-  args.forEach(filename => {
+  const results = args.map(name => {
     try {
-      const files = currentFolder.getFilesByName(filename);
-      if (files.hasNext()) {
-        files.next().setTrashed(true);
-        results.push(`✓ ${filename}`);
-      } else {
-        results.push(`✗ ${filename} (not found)`);
-      }
-    } catch (error) {
-      results.push(`✗ ${filename} (error: ${error.message})`);
+      // 削除処理
+      return `✓ ${name}`;
+    } catch (e) {
+      return `✗ ${name}: ${e.message}`;
     }
   });
   
-  return {
-    success: true,
-    output: `Batch delete results:\n${results.join('\n')}`
-  };
+  return {success: true, output: results.join('\n')};
 }
 ```
 
+**効果**: ネットワークラウンドトリップの削減
+
 ---
 
-## セキュリティ考慮事項
+## セキュリティ
 
 ### 認証と認可
 
-**実行権限**:
-- スクリプトは実行ユーザーの権限で動作
-- アクセス可能な範囲: ユーザーがアクセスできるすべてのDriveファイル
+**OAuth 2.0フロー**:
+```
+User → GAS Web App → Google OAuth → User Authorization → Access Token → Drive API
+```
+
+**スコープ要求**:
+- `https://www.googleapis.com/auth/drive` - Drive完全アクセス
+- `https://www.googleapis.com/auth/drive.file` - アプリ作成ファイルのみ（推奨）
+- `https://www.googleapis.com/auth/script.external_request` - 外部API呼び出し
+
+**実行権限モデル**:
+- **"自分として実行"**: ユーザーの権限でAPI呼び出し
+- **"アクセスするユーザー"**: 各ユーザーが個別に認証
 
 **推奨設定**:
 ```
-アクセスできるユーザー: 自分のみ
-```
-
-**組織内共有の場合**:
-```
-アクセスできるユーザー: (ドメイン)内の全員
+実行者: 自分
+アクセス: 自分のみ（開発時）
+        組織内全員（本番時）
 ```
 
 ---
 
-### XSS対策の詳細
+### 入力検証
 
-**脆弱性のある実装例**（使用禁止）:
+**コマンドライン検証**:
 ```javascript
-// ❌ 危険: HTMLインジェクション可能
-terminal.innerHTML += userInput;
-
-// ❌ 危険: スクリプトタグが実行される
-appendOutput(`<div>${userInput}</div>`);
-```
-
-**安全な実装**:
-```javascript
-// ✓ 安全: textContentで自動エスケープ
-div.textContent = userInput;
-
-// ✓ 安全: escapeHtml関数を使用
-appendOutput(escapeHtml(userInput));
-```
-
-**攻撃シナリオ例**:
-```javascript
-// 悪意のある入力
-> create <img src=x onerror="alert('XSS')">
-
-// escapeHtmlなしの場合 → スクリプト実行
-// escapeHtmlありの場合 → "&lt;img src=x onerror="alert('XSS')"&gt;" と表示
-```
-
----
-
-### ファイル操作の安全性
-
-**パストラバーサル対策**:
-```javascript
-// ファイル名に親ディレクトリ参照を含ませない
-function sanitizeFilename(filename) {
-  // '../' や '..\' を除去
-  return filename.replace(/\.\.[\/\\]/g, '');
-}
-
-function cmdCreate(args) {
-  const filename = sanitizeFilename(args.join(' '));
-  // 以下処理...
-}
-```
-
-**削除操作の確認**:
-```javascript
-// 本番環境では確認プロンプトを追加
-function cmdDelete(args) {
-  const filename = args.join(' ');
-  
-  // 重要ファイルの場合は追加確認
-  const importantPatterns = [/\.config$/, /^\./, /important/i];
-  const isImportant = importantPatterns.some(p => p.test(filename));
-  
-  if (isImportant) {
-    return {
-      success: false,
-      output: `Warning: '${filename}' appears to be important. Use 'delete-force ${filename}' to confirm.`
-    };
+function validateCommand(commandLine) {
+  // 1. 長さチェック
+  if (commandLine.length > 1000) {
+    return {valid: false, error: 'Command too long'};
   }
   
-  // 通常の削除処理
-  // ...
+  // 2. 文字種チェック（制御文字除外）
+  if (/[\x00-\x1F\x7F]/.test(commandLine)) {
+    return {valid: false, error: 'Invalid characters'};
+  }
+  
+  // 3. 空白のみチェック
+  if (commandLine.trim() === '') {
+    return {valid: false, error: 'Empty command'};
+  }
+  
+  return {valid: true};
+}
+```
+
+**ファイル名検証**:
+```javascript
+function validateFilename(filename) {
+  // Google Drive禁止文字: / \ ? * : | " < >
+  const invalidChars = /[\/\\?*:|"<>]/;
+  
+  if (invalidChars.test(filename)) {
+    return {valid: false, error: 'Invalid characters in filename'};
+  }
+  
+  if (filename.length > 255) {
+    return {valid: false, error: 'Filename too long'};
+  }
+  
+  return {valid: true};
 }
 ```
 
 ---
 
-## テスト戦略
+### XSS防止
 
-### 単体テスト (Code.gs)
-
+**全出力のエスケープ**:
 ```javascript
-/**
- * コマンド関数のテストスイート
- */
-function runTests() {
-  const tests = [];
-  
-  // Test 1: cmdHelp
-  tests.push(testCmdHelp());
-  
-  // Test 2: cmdCreate - 正常系
-  tests.push(testCmdCreateSuccess());
-  
-  // Test 3: cmdCreate - 引数なし
-  tests.push(testCmdCreateNoArgs());
-  
-  // Test 4: formatBytes
-  tests.push(testFormatBytes());
-  
-  // 結果出力
-  const passed = tests.filter(t => t.passed).length;
-  Logger.log(`Tests: ${passed}/${tests.length} passed`);
-  
-  tests.forEach(t => {
-    if (!t.passed) {
-      Logger.log(`FAILED: ${t.name} - ${t.error}`);
-    }
-  });
-}
-
-function testCmdHelp() {
-  try {
-    const result = cmdHelp([]);
-    
-    if (!result.success) {
-      return {name: 'cmdHelp', passed: false, error: 'success should be true'};
-    }
-    
-    if (!result.output.includes('Available Commands')) {
-      return {name: 'cmdHelp', passed: false, error: 'output missing header'};
-    }
-    
-    return {name: 'cmdHelp', passed: true};
-  } catch (error) {
-    return {name: 'cmdHelp', passed: false, error: error.message};
-  }
-}
-
-function testCmdCreateNoArgs() {
-  try {
-    const result = cmdCreate([]);
-    
-    if (result.success) {
-      return {name: 'cmdCreate (no args)', passed: false, error: 'should fail without args'};
-    }
-    
-    if (!result.output.includes('Filename required')) {
-      return {name: 'cmdCreate (no args)', passed: false, error: 'wrong error message'};
-    }
-    
-    return {name: 'cmdCreate (no args)', passed: true};
-  } catch (error) {
-    return {name: 'cmdCreate (no args)', passed: false, error: error.message};
-  }
-}
-
-function testFormatBytes() {
-  try {
-    const tests = [
-      {input: 0, expected: '0 B'},
-      {input: 1024, expected: '1.0 KB'},
-      {input: 1048576, expected: '1.0 MB'},
-      {input: 1536, expected: '1.5 KB'}
-    ];
-    
-    for (const test of tests) {
-      const result = formatBytes(test.input);
-      if (result !== test.expected) {
-        return {
-          name: 'formatBytes',
-          passed: false,
-          error: `formatBytes(${test.input}) = ${result}, expected ${test.expected}`
-        };
-      }
-    }
-    
-    return {name: 'formatBytes', passed: true};
-  } catch (error) {
-    return {name: 'formatBytes', passed: false, error: error.message};
-  }
-}
-```
-
-**実行方法**: GASエディタで`runTests`を選択して実行
-
----
-
-### 統合テスト
-
-```javascript
-/**
- * エンドツーエンドテスト: ファイル作成→確認→削除
- */
-function testE2E() {
-  const testFilename = 'test_' + Date.now() + '.txt';
-  
-  try {
-    // 1. ファイル作成
-    const createResult = cmdCreate([testFilename]);
-    if (!createResult.success) {
-      throw new Error('Create failed: ' + createResult.output);
-    }
-    Logger.log('✓ Create succeeded');
-    
-    // 2. ファイル一覧で確認
-    const listResult = cmdList([]);
-    if (!listResult.output.includes(testFilename)) {
-      throw new Error('File not found in list');
-    }
-    Logger.log('✓ File appears in list');
-    
-    // 3. ファイル削除
-    const deleteResult = cmdDelete([testFilename]);
-    if (!deleteResult.success) {
-      throw new Error('Delete failed: ' + deleteResult.output);
-    }
-    Logger.log('✓ Delete succeeded');
-    
-    // 4. 削除確認
-    const listResult2 = cmdList(['refresh']);
-    if (listResult2.output.includes(testFilename)) {
-      throw new Error('File still exists after delete');
-    }
-    Logger.log('✓ File removed from list');
-    
-    Logger.log('E2E Test: PASSED');
-    return true;
-    
-  } catch (error) {
-    Logger.log('E2E Test: FAILED - ' + error.message);
-    
-    // クリーンアップ
-    try {
-      cmdDelete([testFilename]);
-    } catch (e) {
-      // 無視
-    }
-    
-    return false;
-  }
-}
-```
-
----
-
-## デプロイ戦略
-
-### バージョン管理
-
-**Apps Scriptのバージョン機能を使用**:
-
-1. コード変更後、「デプロイ」→「デプロイを管理」
-2. 「新しいバージョン」を作成
-3. 説明を追加（例: "v1.1 - Added cd and pwd commands"）
-
-**ロールバック**:
-1. 「デプロイを管理」→ 対象バージョンを選択
-2. 「このバージョンをデプロイ」
-
----
-
-### 環境分離
-
-**開発環境とプロダクション環境を分離**:
-
-```javascript
-// Code.gsの先頭に追加
-const CONFIG = {
-  environment: 'production',  // 'development' or 'production'
-  debug: false
-};
-
-function log(message) {
-  if (CONFIG.debug || CONFIG.environment === 'development') {
-    Logger.log(message);
-  }
+// HTML出力前に必ずエスケープ
+function safeOutput(text) {
+  return escapeHtml(text);
 }
 
 // 使用例
-function processCommand(commandLine) {
-  log('Processing: ' + commandLine);
-  // ...
-}
+appendOutput(`<span class="result">${safeOutput(userInput)}</span>`);
 ```
 
-**開発用デプロイ**:
-1. プロジェクトを複製
-2. `environment: 'development'`, `debug: true`に設定
-3. 別のWebアプリとしてデプロイ
+**危険なパターン（使用禁止）**:
+```javascript
+// ❌ 絶対NG
+terminal.innerHTML += userInput;
+element.innerHTML = `<div>${userInput}</div>`;
+
+// ✅ 安全
+element.textContent = userInput;
+element.innerHTML = escapeHtml(userInput);
+```
+
+**テスト用攻撃ベクター**:
+```html
+<script>alert('XSS')</script>
+<img src=x onerror="alert('XSS')">
+<iframe src="javascript:alert('XSS')">
+<svg onload="alert('XSS')">
+```
+
+すべて正しくエスケープされることを確認する。
 
 ---
 
-## 高度な機能実装例
+### CSRF対策
 
-### 機能1: ファイル検索 (`find`)
+**GASの組み込み対策**:
+- google.script.runは同一オリジンポリシーで保護
+- CSRFトークン不要（GASが自動処理）
 
+**追加対策**:
 ```javascript
-/**
- * find: ファイル名でファイルを検索
- * Usage: find <pattern>
- */
-function cmdFind(args) {
-  if (args.length === 0) {
-    return {
-      success: false,
-      output: 'Error: Usage: find <pattern>'
-    };
-  }
-  
-  const pattern = args.join(' ').toLowerCase();
-  
-  try {
-    const currentFolder = getCurrentFolder();
-    const files = currentFolder.getFiles();
-    const matches = [];
-    
-    while (files.hasNext()) {
-      const file = files.next();
-      if (file.getName().toLowerCase().includes(pattern)) {
-        matches.push({
-          name: file.getName(),
-          id: file.getId(),
-          modified: Utilities.formatDate(
-            file.getLastUpdated(),
-            Session.getScriptTimeZone(),
-            'yyyy-MM-dd HH:mm'
-          )
-        });
-      }
-    }
-    
-    if (matches.length === 0) {
-      return {
-        success: true,
-        output: `No files matching '${pattern}' found.`
-      };
-    }
-    
-    let output = `Found ${matches.length} file(s) matching '${pattern}':\n\n`;
-    matches.forEach(m => {
-      output += `${m.name}\n  ID: ${m.id}\n  Modified: ${m.modified}\n\n`;
-    });
-    
-    return {success: true, output: output};
-    
-  } catch (error) {
-    return {
-      success: false,
-      output: `Error: ${error.message}`
-    };
-  }
-}
-
-// commandMapに追加
-'find': cmdFind
-```
-
----
-
-### 機能2: ファイル情報詳細表示 (`info`)
-
-```javascript
-/**
- * info: ファイルの詳細情報を表示
- * Usage: info <filename>
- */
-function cmdInfo(args) {
-  if (args.length === 0) {
-    return {
-      success: false,
-      output: 'Error: Usage: info <filename>'
-    };
-  }
-  
-  const filename = args.join(' ');
-  
-  try {
-    const currentFolder = getCurrentFolder();
-    const files = currentFolder.getFilesByName(filename);
-    
-    if (!files.hasNext()) {
-      return {
-        success: false,
-        output: `Error: File '${filename}' not found`
-      };
-    }
-    
-    const file = files.next();
-    
-    // 詳細情報を収集
-    const info = {
-      name: file.getName(),
-      id: file.getId(),
-      mimeType: file.getMimeType(),
-      size: formatBytes(file.getSize()),
-      created: Utilities.formatDate(
-        file.getDateCreated(),
-        Session.getScriptTimeZone(),
-        'yyyy-MM-dd HH:mm:ss'
-      ),
-      modified: Utilities.formatDate(
-        file.getLastUpdated(),
-        Session.getScriptTimeZone(),
-        'yyyy-MM-dd HH:mm:ss'
-      ),
-      owner: file.getOwner().getName(),
-      url: file.getUrl(),
-      downloadUrl: file.getDownloadUrl() || 'N/A'
-    };
-    
-    // 整形して出力
-    let output = `=== File Information ===\n\n`;
-    output += `Name:         ${info.name}\n`;
-    output += `ID:           ${info.id}\n`;
-    output += `MIME Type:    ${info.mimeType}\n`;
-    output += `Size:         ${info.size}\n`;
-    output += `Created:      ${info.created}\n`;
-    output += `Modified:     ${info.modified}\n`;
-    output += `Owner:        ${info.owner}\n`;
-    output += `URL:          ${info.url}\n`;
-    output += `Download URL: ${info.downloadUrl}\n`;
-    
-    return {success: true, output: output};
-    
-  } catch (error) {
-    return {
-      success: false,
-      output: `Error: ${error.message}`
-    };
-  }
-}
-
-// commandMapに追加
-'info': cmdInfo
-```
-
----
-
-### 機能3: ファイルリネーム (`mv`)
-
-```javascript
-/**
- * mv: ファイルをリネームまたは移動
- * Usage: mv <source> <destination>
- */
-function cmdMv(args) {
-  if (args.length < 2) {
-    return {
-      success: false,
-      output: 'Error: Usage: mv <source> <destination>'
-    };
-  }
-  
-  const source = args[0];
-  const destination = args.slice(1).join(' ');
-  
-  try {
-    const currentFolder = getCurrentFolder();
-    const files = currentFolder.getFilesByName(source);
-    
-    if (!files.hasNext()) {
-      return {
-        success: false,
-        output: `Error: File '${source}' not found`
-      };
-    }
-    
-    const file = files.next();
-    
-    // 拡張: フォルダへの移動も可能にする
-    // ここではリネームのみ実装
-    file.setName(destination);
-    
-    return {
-      success: true,
-      output: `Renamed: ${source} → ${destination}`
-    };
-    
-  } catch (error) {
-    return {
-      success: false,
-      output: `Error: ${error.message}`
-    };
-  }
-}
-
-// commandMapに追加
-'mv': cmdMv,
-'rename': cmdMv  // エイリアス
-```
-
----
-
-### 機能4: コマンド履歴表示 (`history`)
-
-HTML側に実装:
-
-```javascript
-// index.htmlに追加
-function cmdHistory() {
-  if (state.commandHistory.length === 0) {
-    appendOutput('<span class="result">No command history.</span>');
-    return;
-  }
-  
-  let output = `Command History (${state.commandHistory.length} commands):\n\n`;
-  state.commandHistory.forEach((cmd, index) => {
-    output += `${String(index + 1).padStart(4, ' ')}: ${cmd}\n`;
-  });
-  
-  appendOutput(`<span class="result">${escapeHtml(output)}</span>`);
-}
-
-// handleCommand関数を修正してhistoryコマンドに対応
-function handleCommand() {
-  const command = commandInput.value.trim();
-  
-  if (!command) return;
-  
-  // ローカル処理のコマンド
-  if (command === 'history') {
-    appendOutput(`<span class="prompt">drive@root:~$</span> <span class="command">${escapeHtml(command)}</span>`);
-    state.commandHistory.push(command);
-    state.historyIndex = state.commandHistory.length;
-    commandInput.value = '';
-    cmdHistory();
-    return;
-  }
-  
-  if (command === 'clear') {
-    terminal.innerHTML = '';
-    state.commandHistory.push(command);
-    state.historyIndex = state.commandHistory.length;
-    commandInput.value = '';
-    return;
-  }
-  
-  // 通常のGAS処理
-  // ...既存のコード
-}
-```
-
----
-
-## API制限と対策
-
-### Drive API クォータ
-
-**制限値**:
-- 読み取り: 1ユーザーあたり1000リクエスト/100秒
-- 書き込み: 1ユーザーあたり300リクエスト/100秒
-
-**対策**:
-1. **バッチ処理**: 複数操作をまとめる
-2. **キャッシュ**: 頻繁にアクセスされるデータをキャッシュ
-3. **レート制限**: 連続実行を制限
-
-```javascript
-// レート制限の実装例
-const RATE_LIMIT = {
-  maxRequests: 10,
-  timeWindow: 60000  // 60秒
-};
-
-function checkRateLimit() {
+// セッショントークンの検証（オプション）
+function validateSession() {
   const props = PropertiesService.getUserProperties();
-  const key = 'rateLimit_' + new Date().getMinutes();
-  const count = parseInt(props.getProperty(key) || '0');
+  const sessionToken = props.getProperty('sessionToken');
   
-  if (count >= RATE_LIMIT.maxRequests) {
+  if (!sessionToken) {
+    const newToken = Utilities.getUuid();
+    props.setProperty('sessionToken', newToken);
+    return newToken;
+  }
+  
+  return sessionToken;
+}
+```
+
+---
+
+### レート制限
+
+**Drive APIクォータ**:
+- 読み取り: 1,000リクエスト/100秒/ユーザー
+- 書き込み: 300リクエスト/100秒/ユーザー
+
+**実装例**:
+```javascript
+function checkRateLimit(operation) {
+  const props = PropertiesService.getUserProperties();
+  const key = `rateLimit_${operation}_${Math.floor(Date.now() / 100000)}`;
+  
+  const count = parseInt(props.getProperty(key) || '0');
+  const limit = operation === 'read' ? 1000 : 300;
+  
+  if (count >= limit) {
     return {
       allowed: false,
-      message: 'Rate limit exceeded. Please wait.'
+      message: `Rate limit exceeded for ${operation}. Wait 100 seconds.`
     };
   }
   
   props.setProperty(key, String(count + 1));
   return {allowed: true};
 }
+```
 
-function processCommand(commandLine) {
-  // レート制限チェック
-  const rateLimitCheck = checkRateLimit();
-  if (!rateLimitCheck.allowed) {
+**使用方法**:
+```javascript
+function cmdList(args) {
+  const rateCheck = checkRateLimit('read');
+  if (!rateCheck.allowed) {
+    return {success: false, output: rateCheck.message};
+  }
+  
+  // 通常処理
+}
+```
+
+---
+
+## 拡張機能の実装案
+
+### 機能1: ファイル検索の高度化
+
+**現在**: 完全一致のみ
+**拡張**: 正規表現サポート
+
+```javascript
+function cmdFindRegex(args) {
+  if (args.length === 0) {
+    return {success: false, output: 'Error: Usage: find-regex <pattern>'};
+  }
+  
+  const pattern = new RegExp(args.join(' '), 'i');
+  const currentFolder = getCurrentFolder();
+  const matches = [];
+  
+  // フォルダ検索
+  const folders = currentFolder.getFolders();
+  while (folders.hasNext()) {
+    const folder = folders.next();
+    if (pattern.test(folder.getName())) {
+      matches.push({
+        name: '[' + folder.getName() + ']',
+        type: 'DIR',
+        id: folder.getId()
+      });
+    }
+  }
+  
+  // ファイル検索
+  const files = currentFolder.getFiles();
+  while (files.hasNext()) {
+    const file = files.next();
+    if (pattern.test(file.getName())) {
+      matches.push({
+        name: file.getName(),
+        type: 'FILE',
+        id: file.getId()
+      });
+    }
+  }
+  
+  if (matches.length === 0) {
+    return {success: true, output: 'No matches found.'};
+  }
+  
+  let output = `Found ${matches.length} match(es):\n\n`;
+  matches.forEach(m => {
+    output += `${m.type}: ${m.name}\n  ID: ${m.id}\n\n`;
+  });
+  
+  return {success: true, output: output};
+}
+```
+
+**コマンドマップ追加**:
+```javascript
+'find-regex': cmdFindRegex,
+'fr': cmdFindRegex  // エイリアス
+```
+
+---
+
+### 機能2: ファイル内容検索
+
+```javascript
+function cmdGrep(args) {
+  if (args.length < 2) {
+    return {success: false, output: 'Error: Usage: grep <pattern> <file>'};
+  }
+  
+  const pattern = args[0];
+  const filename = args.slice(1).join(' ');
+  const currentFolder = getCurrentFolder();
+  
+  try {
+    const files = currentFolder.getFilesByName(filename);
+    if (!files.hasNext()) {
+      return {success: false, output: `Error: File '${filename}' not found`};
+    }
+    
+    const file = files.next();
+    const mimeType = file.getMimeType();
+    
+    // テキストファイルのみ
+    if (!mimeType.startsWith('text/') && mimeType !== MimeType.PLAIN_TEXT) {
+      return {success: false, output: 'Error: Not a text file'};
+    }
+    
+    const content = file.getBlob().getDataAsString();
+    const lines = content.split('\n');
+    const matches = [];
+    
+    lines.forEach((line, index) => {
+      if (line.includes(pattern)) {
+        matches.push(`${index + 1}: ${line}`);
+      }
+    });
+    
+    if (matches.length === 0) {
+      return {success: true, output: 'No matches found.'};
+    }
+    
+    let output = `Found ${matches.length} match(es) in ${filename}:\n\n`;
+    output += matches.join('\n');
+    
+    return {success: true, output: output};
+    
+  } catch (error) {
+    return {success: false, output: `Error: ${error.message}`};
+  }
+}
+```
+
+---
+
+### 機能3: ファイル圧縮
+
+```javascript
+function cmdZip(args) {
+  if (args.length === 0) {
+    return {success: false, output: 'Error: Usage: zip <output.zip> <file1> <file2> ...'};
+  }
+  
+  const zipName = args[0];
+  const fileNames = args.slice(1);
+  const currentFolder = getCurrentFolder();
+  
+  try {
+    const blobs = [];
+    
+    fileNames.forEach(name => {
+      const files = currentFolder.getFilesByName(name);
+      if (files.hasNext()) {
+        blobs.push(files.next().getBlob());
+      }
+    });
+    
+    if (blobs.length === 0) {
+      return {success: false, output: 'Error: No valid files found'};
+    }
+    
+    const zipBlob = Utilities.zip(blobs, zipName);
+    const zipFile = currentFolder.createFile(zipBlob);
+    
     return {
-      success: false,
-      output: rateLimitCheck.message
+      success: true,
+      output: `Created: ${zipName}\nFiles: ${blobs.length}\nID: ${zipFile.getId()}`
     };
+    
+  } catch (error) {
+    return {success: false, output: `Error: ${error.message}`};
+  }
+}
+```
+
+---
+
+### 機能4: エイリアス機能
+
+**状態保存**:
+```javascript
+function cmdAlias(args) {
+  if (args.length === 0) {
+    // エイリアス一覧表示
+    const props = PropertiesService.getUserProperties();
+    const aliases = JSON.parse(props.getProperty('aliases') || '{}');
+    
+    if (Object.keys(aliases).length === 0) {
+      return {success: true, output: 'No aliases defined.'};
+    }
+    
+    let output = 'Defined aliases:\n\n';
+    for (const [name, command] of Object.entries(aliases)) {
+      output += `${name} → ${command}\n`;
+    }
+    
+    return {success: true, output: output};
+  }
+  
+  if (args.length < 2) {
+    return {success: false, output: 'Error: Usage: alias <name> <command>'};
+  }
+  
+  const aliasName = args[0];
+  const command = args.slice(1).join(' ');
+  
+  const props = PropertiesService.getUserProperties();
+  const aliases = JSON.parse(props.getProperty('aliases') || '{}');
+  
+  aliases[aliasName] = command;
+  props.setProperty('aliases', JSON.stringify(aliases));
+  
+  return {success: true, output: `Alias created: ${aliasName} → ${command}`};
+}
+```
+
+**コマンド処理の修正**:
+```javascript
+function processCommand(commandLine) {
+  // エイリアス展開
+  const props = PropertiesService.getUserProperties();
+  const aliases = JSON.parse(props.getProperty('aliases') || '{}');
+  
+  const parts = commandLine.trim().split(' ');
+  const command = parts[0];
+  
+  if (aliases[command]) {
+    commandLine = aliases[command] + ' ' + parts.slice(1).join(' ');
   }
   
   // 通常の処理
@@ -1674,32 +1749,427 @@ function processCommand(commandLine) {
 
 ---
 
-## まとめ
+### 機能5: パイプライン
 
-### プロジェクトの特徴
+**構文**: `command1 | command2`
 
-1. **モジュラー設計**: 各コマンドが独立した関数
-2. **型安全性**: すべてのコマンドが同じインターフェース
-3. **拡張性**: 新規コマンド追加が容易
-4. **セキュリティ**: XSS対策、入力バリデーション
-5. **パフォーマンス**: キャッシュ、バッチ処理
+**実装**:
+```javascript
+function processCommand(commandLine) {
+  // パイプ検出
+  if (commandLine.includes('|')) {
+    return processPipeline(commandLine);
+  }
+  
+  // 通常処理
+  // ...
+}
 
-### 推奨される次のステップ
+function processPipeline(commandLine) {
+  const commands = commandLine.split('|').map(c => c.trim());
+  let input = '';
+  
+  for (const cmd of commands) {
+    const result = executeCommand(cmd, input);
+    if (!result.success) {
+      return result;
+    }
+    input = result.output;
+  }
+  
+  return {success: true, output: input};
+}
+```
 
-1. `cd`, `pwd`, `mkdir`コマンドを実装
-2. カレントディレクトリの永続化
-3. ファイル検索機能の追加
-4. エラーログの保存
-5. コマンド補完機能の実装
-
-### 参考リソース
-
-- [Google Apps Script Documentation](https://developers.google.com/apps-script)
-- [DriveApp Class Reference](https://developers.google.com/apps-script/reference/drive/drive-app)
-- [HTML Service Guide](https://developers.google.com/apps-script/guides/html)
+**使用例**:
+```bash
+> ls | grep report
+> find report | stat
+```
 
 ---
 
-**ドキュメントバージョン**: 1.0  
+### 機能6: スクリプト実行
+
+**ファイルからコマンド読み込み**:
+```javascript
+function cmdSource(args) {
+  if (args.length === 0) {
+    return {success: false, output: 'Error: Usage: source <script.txt>'};
+  }
+  
+  const filename = args.join(' ');
+  const currentFolder = getCurrentFolder();
+  
+  try {
+    const files = currentFolder.getFilesByName(filename);
+    if (!files.hasNext()) {
+      return {success: false, output: `Error: File '${filename}' not found`};
+    }
+    
+    const file = files.next();
+    const content = file.getBlob().getDataAsString();
+    const lines = content.split('\n').filter(line => line.trim() !== '');
+    
+    const results = [];
+    for (const line of lines) {
+      if (line.startsWith('#')) continue;  // コメント
+      
+      const result = processCommand(line);
+      results.push(`> ${line}\n${result.output}\n`);
+      
+      if (!result.success) break;
+    }
+    
+    return {success: true, output: results.join('\n')};
+    
+  } catch (error) {
+    return {success: false, output: `Error: ${error.message}`};
+  }
+}
+```
+
+**スクリプトファイル例**:
+```bash
+# setup.txt
+cd Documents
+new project dir
+cd project
+new README.md file
+new main.py file
+ls
+```
+
+**実行**:
+```bash
+> source setup.txt
+```
+
+---
+
+## API制限と対策
+
+### Drive API クォータ
+
+**無料アカウント**:
+| 操作 | 制限 |
+|------|------|
+| 読み取り | 1,000/100秒/ユーザー |
+| 書き込み | 300/100秒/ユーザー |
+| ストレージ | 15GB |
+
+**Google Workspace**:
+| 操作 | 制限 |
+|------|------|
+| 読み取り | 10,000/100秒/ユーザー |
+| 書き込み | 1,000/100秒/ユーザー |
+| ストレージ | 組織による |
+
+---
+
+### GAS実行時間制限
+
+**制限値**:
+- 無料: 6分/実行
+- Google Workspace: 6分/実行（変更なし）
+
+**対策**:
+```javascript
+function cmdLongOperation(args) {
+  const startTime = Date.now();
+  const maxTime = 5 * 60 * 1000;  // 5分
+  
+  while (hasMoreWork()) {
+    if (Date.now() - startTime > maxTime) {
+      return {
+        success: false,
+        output: 'Error: Operation timed out. Resume with: resume-operation'
+      };
+    }
+    
+    doWork();
+  }
+  
+  return {success: true, output: 'Completed'};
+}
+```
+
+---
+
+### PropertiesService制限
+
+**制限値**:
+- 最大サイズ: 9KB（キー＋値の合計）
+- 呼び出し制限: なし（実質無制限）
+
+**最適化**:
+```javascript
+// 大きなデータは圧縮
+function saveCompressed(key, data) {
+  const compressed = Utilities.base64Encode(
+    Utilities.gzip(Utilities.newBlob(JSON.stringify(data))).getBytes()
+  );
+  PropertiesService.getUserProperties().setProperty(key, compressed);
+}
+
+function loadCompressed(key) {
+  const compressed = PropertiesService.getUserProperties().getProperty(key);
+  if (!compressed) return null;
+  
+  const decompressed = Utilities.ungzip(
+    Utilities.newBlob(Utilities.base64Decode(compressed))
+  );
+  return JSON.parse(decompressed.getDataAsString());
+}
+```
+
+---
+
+## テスト戦略
+
+### 単体テスト
+
+**テストフレームワーク**:
+```javascript
+function runUnitTests() {
+  const tests = [
+    testFormatBytes,
+    testPadRight,
+    testBuildPath,
+    testValidateFilename
+  ];
+  
+  let passed = 0;
+  let failed = 0;
+  
+  tests.forEach(test => {
+    try {
+      test();
+      Logger.log(`✓ ${test.name}`);
+      passed++;
+    } catch (error) {
+      Logger.log(`✗ ${test.name}: ${error.message}`);
+      failed++;
+    }
+  });
+  
+  Logger.log(`\nResults: ${passed} passed, ${failed} failed`);
+}
+
+function testFormatBytes() {
+  assertEqual(formatBytes(0), '0 B');
+  assertEqual(formatBytes(1024), '1.0 KB');
+  assertEqual(formatBytes(1048576), '1.0 MB');
+  assertEqual(formatBytes(1536), '1.5 KB');
+}
+
+function assertEqual(actual, expected) {
+  if (actual !== expected) {
+    throw new Error(`Expected ${expected}, got ${actual}`);
+  }
+}
+```
+
+---
+
+### 統合テスト
+
+```javascript
+function runIntegrationTests() {
+  const testFile = 'test_' + Date.now() + '.txt';
+  
+  try {
+    // 作成テスト
+    let result = cmdNew([testFile, 'file']);
+    assert(result.success, 'File creation failed');
+    
+    // 存在確認
+    result = cmdFind([testFile]);
+    assert(result.success && result.output.includes(testFile), 'Find failed');
+    
+    // 名前変更
+    const newName = 'renamed_' + Date.now() + '.txt';
+    result = cmdRename([testFile, newName]);
+    assert(result.success, 'Rename failed');
+    
+    // 削除
+    result = cmdDelete([newName]);
+    assert(result.success, 'Delete failed');
+    
+    // ゴミ箱確認
+    result = cmdTrash([]);
+    assert(result.success && result.output.includes(newName), 'Trash check failed');
+    
+    // 復元
+    result = cmdTrash([newName, 'restore']);
+    assert(result.success, 'Restore failed');
+    
+    // 最終削除
+    cmdDelete([newName]);
+    
+    Logger.log('✓ All integration tests passed');
+    
+  } catch (error) {
+    Logger.log('✗ Integration test failed: ' + error.message);
+  }
+}
+
+function assert(condition, message) {
+  if (!condition) {
+    throw new Error(message);
+  }
+}
+```
+
+---
+
+## デプロイメント
+
+### バージョン管理
+
+**セマンティックバージョニング**:
+```
+MAJOR.MINOR.PATCH
+
+MAJOR: 破壊的変更
+MINOR: 新機能追加
+PATCH: バグ修正
+```
+
+**現在のバージョン**: 2.0.0
+
+**変更履歴**:
+```
+v2.0.0 (2025-10-17)
+  - 27コマンドへの拡張
+  - ディレクトリナビゲーション
+  - テーマ切り替え
+  - クリップボード機能
+
+v1.0.0 (2025-10-01)
+  - 初期リリース
+  - 基本コマンド (ls, create, delete)
+```
+
+---
+
+### 環境分離
+
+**開発環境**:
+```javascript
+const CONFIG = {
+  env: 'development',
+  debug: true,
+  logLevel: 'verbose'
+};
+```
+
+**本番環境**:
+```javascript
+const CONFIG = {
+  env: 'production',
+  debug: false,
+  logLevel: 'error'
+};
+```
+
+**環境依存処理**:
+```javascript
+function log(message, level = 'info') {
+  if (CONFIG.env === 'development' || level === 'error') {
+    Logger.log(`[${level.toUpperCase()}] ${message}`);
+  }
+}
+```
+
+---
+
+### ロールバック手順
+
+**問題発生時**:
+1. GASエディタ → デプロイ → デプロイを管理
+2. 以前のバージョンを選択
+3. 「このバージョンをデプロイ」をクリック
+
+**手動ロールバック**:
+```javascript
+// バージョン管理用の定数
+const VERSION = '2.0.0';
+
+function getVersion() {
+  return {success: true, output: `Google Drive CLI v${VERSION}`};
+}
+```
+
+---
+
+## まとめ
+
+### プロジェクトの特性
+
+**形式的性質**:
+1. **完全性**: すべてのコマンドが `CommandResult` 型を返す
+2. **決定性**: 同じ入力に対して同じ出力
+3. **安全性**: 無効な状態遷移が発生しない
+4. **終了性**: すべてのコマンドが有限時間で終了
+
+**実装品質**:
+- **モジュール性**: 27個の独立したコマンド関数
+- **拡張性**: 新規コマンド追加が容易
+- **保守性**: 一貫したコーディング規約
+- **テスト可能性**: 単体・統合テスト完備
+
+---
+
+### 数学的整合性
+
+**型安全性**:
+$\forall c \in \mathcal{C}: \text{type}(c) = [\text{String}] \rightarrow \text{CommandResult}$
+
+**状態不変条件の保持**:
+$\forall s \in S, c \in \mathcal{C}: I(s) \Rightarrow I(\delta(s, c))$
+
+**停止性**:
+$\forall c \in \mathcal{C}: \exists t \in \mathbb{N}: \text{terminates}(c, t)$
+
+---
+
+### 今後の開発ロードマップ
+
+**Phase 1** (完了):
+- ✅ 基本ナビゲーション (ls, cd, pwd)
+- ✅ ファイル操作 (new, rn, del, copy, paste)
+- ✅ メタデータ (stat, url, open)
+- ✅ UI制御 (clear, reload, exit, color, theme)
+
+**Phase 2** (計画中):
+- ⬜ 正規表現検索 (find-regex)
+- ⬜ ファイル内容検索 (grep)
+- ⬜ ファイル圧縮 (zip, unzip)
+- ⬜ エイリアス機能 (alias)
+
+**Phase 3** (将来):
+- ⬜ パイプライン処理
+- ⬜ スクリプト実行 (source)
+- ⬜ バックグラウンド実行
+- ⬜ プラグインシステム
+
+---
+
+### リファレンス
+
+**公式ドキュメント**:
+- [Google Apps Script](https://developers.google.com/apps-script)
+- [DriveApp Reference](https://developers.google.com/apps-script/reference/drive/drive-app)
+- [PropertiesService](https://developers.google.com/apps-script/reference/properties)
+
+**コミュニティリソース**:
+- Stack Overflow: `google-apps-script` タグ
+- GitHub: GAS関連プロジェクト
+
+---
+
+**ドキュメントバージョン**: 2.0.0  
 **最終更新**: 2025-10-17  
-**対象GASバージョン**: V8 Runtime
+**対象GASランタイム**: V8  
+**対象ブラウザ**: Chrome, Firefox, Safari (最新版)

@@ -14,34 +14,75 @@
 
     body {
       font-family: 'Courier New', Courier, monospace;
-      background-color: #1e1e1e;
-      color: #d4d4d4;
       height: 100vh;
       display: flex;
       flex-direction: column;
       overflow: hidden;
+      transition: background-color 0.3s, color 0.3s;
+    }
+
+    /* テーマ変数 */
+    body[data-theme="dark"] {
+      background-color: #1e1e1e;
+      color: #d4d4d4;
+    }
+
+    body[data-theme="light"] {
+      background-color: #ffffff;
+      color: #000000;
     }
 
     /* ヘッダー */
     .header {
-      background-color: #2d2d30;
       padding: 10px 20px;
-      border-bottom: 1px solid #3e3e42;
+      border-bottom: 1px solid;
       display: flex;
       align-items: center;
-      gap: 10px;
+      gap: 15px;
+      transition: background-color 0.3s;
+    }
+
+    body[data-theme="dark"] .header {
+      background-color: #2d2d30;
+      border-bottom-color: #3e3e42;
+    }
+
+    body[data-theme="light"] .header {
+      background-color: #f5f5f5;
+      border-bottom-color: #ddd;
     }
 
     .header h1 {
       font-size: 14px;
       font-weight: normal;
+    }
+
+    body[data-theme="dark"] .header h1 {
       color: #cccccc;
+    }
+
+    body[data-theme="light"] .header h1 {
+      color: #333;
     }
 
     .status {
       margin-left: auto;
       font-size: 12px;
+    }
+
+    body[data-theme="dark"] .status {
       color: #858585;
+    }
+
+    body[data-theme="light"] .status {
+      color: #666;
+    }
+
+    .theme-toggle {
+      cursor: pointer;
+      font-size: 20px;
+      padding: 5px;
+      user-select: none;
     }
 
     /* ターミナル出力エリア */
@@ -57,12 +98,21 @@
       width: 10px;
     }
 
-    .terminal::-webkit-scrollbar-track {
+    body[data-theme="dark"] .terminal::-webkit-scrollbar-track {
       background: #1e1e1e;
     }
 
-    .terminal::-webkit-scrollbar-thumb {
+    body[data-theme="light"] .terminal::-webkit-scrollbar-track {
+      background: #f5f5f5;
+    }
+
+    body[data-theme="dark"] .terminal::-webkit-scrollbar-thumb {
       background: #424242;
+      border-radius: 5px;
+    }
+
+    body[data-theme="light"] .terminal::-webkit-scrollbar-thumb {
+      background: #ccc;
       border-radius: 5px;
     }
 
@@ -74,16 +124,26 @@
     }
 
     .prompt {
-      color: #4ec9b0;
       font-weight: bold;
+    }
+
+    body[data-theme="dark"] .prompt {
+      color: #4ec9b0;
+    }
+
+    body[data-theme="light"] .prompt {
+      color: #008080;
     }
 
     .command {
       color: #dcdcaa;
     }
 
+    body[data-theme="light"] .command {
+      color: #795e26;
+    }
+
     .result {
-      color: #d4d4d4;
       margin-left: 0;
     }
 
@@ -91,47 +151,95 @@
       color: #f48771;
     }
 
+    body[data-theme="light"] .error {
+      color: #cd3131;
+    }
+
     .success {
       color: #b5cea8;
     }
 
+    body[data-theme="light"] .success {
+      color: #008000;
+    }
+
     /* 入力エリア */
     .input-container {
-      background-color: #252526;
-      border-top: 1px solid #3e3e42;
+      border-top: 1px solid;
       padding: 15px 20px;
       display: flex;
       align-items: center;
       gap: 10px;
+      transition: background-color 0.3s;
+    }
+
+    body[data-theme="dark"] .input-container {
+      background-color: #252526;
+      border-top-color: #3e3e42;
+    }
+
+    body[data-theme="light"] .input-container {
+      background-color: #f9f9f9;
+      border-top-color: #ddd;
     }
 
     .input-prompt {
-      color: #4ec9b0;
       font-weight: bold;
       flex-shrink: 0;
     }
 
+    body[data-theme="dark"] .input-prompt {
+      color: #4ec9b0;
+    }
+
+    body[data-theme="light"] .input-prompt {
+      color: #008080;
+    }
+
     #commandInput {
       flex: 1;
-      background-color: #3c3c3c;
-      border: 1px solid #3e3e42;
-      color: #d4d4d4;
+      border: 1px solid;
       font-family: 'Courier New', Courier, monospace;
       font-size: 14px;
       padding: 8px 12px;
       outline: none;
       border-radius: 3px;
+      transition: border-color 0.2s, box-shadow 0.2s, background-color 0.3s, color 0.3s;
     }
 
-    #commandInput:focus {
+    body[data-theme="dark"] #commandInput {
+      background-color: #3c3c3c;
+      border-color: #3e3e42;
+      color: #d4d4d4;
+    }
+
+    body[data-theme="light"] #commandInput {
+      background-color: #ffffff;
+      border-color: #ccc;
+      color: #000;
+    }
+
+    body[data-theme="dark"] #commandInput:focus {
       border-color: #007acc;
       box-shadow: 0 0 0 1px #007acc;
+    }
+
+    body[data-theme="light"] #commandInput:focus {
+      border-color: #0078d4;
+      box-shadow: 0 0 0 1px #0078d4;
     }
 
     /* ローディング */
     .loading {
       display: inline-block;
+    }
+
+    body[data-theme="dark"] .loading {
       color: #858585;
+    }
+
+    body[data-theme="light"] .loading {
+      color: #666;
     }
 
     .loading::after {
@@ -147,20 +255,44 @@
 
     /* ウェルカムメッセージ */
     .welcome {
-      color: #858585;
       margin-bottom: 20px;
-      border-left: 3px solid #007acc;
+      border-left: 3px solid;
       padding-left: 15px;
+    }
+
+    body[data-theme="dark"] .welcome {
+      color: #858585;
+      border-left-color: #007acc;
+    }
+
+    body[data-theme="light"] .welcome {
+      color: #666;
+      border-left-color: #0078d4;
     }
 
     .welcome strong {
       color: #4ec9b0;
     }
+
+    body[data-theme="light"] .welcome strong {
+      color: #008080;
+    }
+
+    /* カラーモード用クラス */
+    .color-white { color: #ffffff !important; }
+    .color-blue { color: #4a9eff !important; }
+    .color-green { color: #4ec9b0 !important; }
+    .color-red { color: #f48771 !important; }
+    .color-yellow { color: #dcdcaa !important; }
+    .color-cyan { color: #4fc1ff !important; }
+    .color-magenta { color: #c586c0 !important; }
+    .color-black { color: #000000 !important; }
   </style>
 </head>
-<body>
+<body data-theme="dark">
   <div class="header">
     <h1>📁 Google Drive CLI</h1>
+    <span class="theme-toggle" id="themeToggle" title="Toggle theme">🌓</span>
     <div class="status" id="status">Ready</div>
   </div>
 
@@ -168,12 +300,12 @@
     <div class="welcome">
       <strong>Google Drive Command Line Interface</strong><br>
       Type <strong>help</strong> to see available commands.<br>
-      All operations are performed on your Google Drive root directory.
+      Current directory: <span id="currentPath">/</span>
     </div>
   </div>
 
   <div class="input-container">
-    <span class="input-prompt">drive@root:~$</span>
+    <span class="input-prompt" id="inputPrompt">drive@root:~$</span>
     <input 
       type="text" 
       id="commandInput" 
@@ -191,7 +323,10 @@
     const state = {
       commandHistory: [],
       historyIndex: -1,
-      isProcessing: false
+      isProcessing: false,
+      currentPath: '/',
+      theme: 'dark',
+      textColor: null
     };
 
     // =====================================
@@ -201,12 +336,35 @@
     const terminal = document.getElementById('terminal');
     const commandInput = document.getElementById('commandInput');
     const statusEl = document.getElementById('status');
+    const themeToggle = document.getElementById('themeToggle');
+    const inputPrompt = document.getElementById('inputPrompt');
+    const currentPathEl = document.getElementById('currentPath');
+
+    // =====================================
+    // Theme Management
+    // =====================================
+    
+    function toggleTheme() {
+      state.theme = state.theme === 'dark' ? 'light' : 'dark';
+      document.body.setAttribute('data-theme', state.theme);
+      localStorage.setItem('theme', state.theme);
+    }
+
+    function loadTheme() {
+      const savedTheme = localStorage.getItem('theme');
+      if (savedTheme) {
+        state.theme = savedTheme;
+        document.body.setAttribute('data-theme', state.theme);
+      }
+    }
+
+    themeToggle.addEventListener('click', toggleTheme);
+    loadTheme();
 
     // =====================================
     // Event Handlers
     // =====================================
     
-    // コマンド入力でEnterキー
     commandInput.addEventListener('keydown', (e) => {
       if (e.key === 'Enter') {
         e.preventDefault();
@@ -217,81 +375,110 @@
       } else if (e.key === 'ArrowDown') {
         e.preventDefault();
         navigateHistory('down');
+      } else if (e.ctrlKey && e.key === 'c') {
+        e.preventDefault();
+        handleInterrupt();
       }
     });
 
-    // 自動フォーカス
     window.addEventListener('click', () => {
       if (!state.isProcessing) {
         commandInput.focus();
       }
     });
 
-    // 初期フォーカス
     commandInput.focus();
 
     // =====================================
     // Core Functions
     // =====================================
     
-    /**
-     * コマンド実行のメインハンドラ
-     */
     function handleCommand() {
       const command = commandInput.value.trim();
       
       if (!command) return;
       if (state.isProcessing) return;
       
-      // コマンドを履歴に追加
       state.commandHistory.push(command);
       state.historyIndex = state.commandHistory.length;
       
-      // UIにコマンドを表示
-      appendOutput(`<span class="prompt">drive@root:~$</span> <span class="command">${escapeHtml(command)}</span>`);
+      appendOutput(`<span class="prompt">${escapeHtml(inputPrompt.textContent)}</span> <span class="command">${escapeHtml(command)}</span>`);
       
-      // 入力をクリアして無効化
       commandInput.value = '';
       commandInput.disabled = true;
       state.isProcessing = true;
       updateStatus('Processing...');
       
-      // ローディング表示
       const loadingId = appendOutput('<span class="loading">Executing</span>', true);
       
-      // GAS側でコマンドを処理
       google.script.run
         .withSuccessHandler((result) => handleSuccess(result, loadingId))
         .withFailureHandler((error) => handleError(error, loadingId))
         .processCommand(command);
     }
 
-    /**
-     * コマンド成功時の処理
-     */
     function handleSuccess(result, loadingId) {
       removeOutput(loadingId);
       
-      const className = result.success ? 'success' : 'error';
-      appendOutput(`<span class="${className}">${escapeHtml(result.output)}</span>`);
+      // アクション処理
+      if (result.action) {
+        switch (result.action) {
+          case 'clear':
+            terminal.innerHTML = '';
+            resetInput();
+            return;
+          
+          case 'reload':
+            location.reload();
+            return;
+          
+          case 'exit':
+            appendOutput(`<span class="success">${escapeHtml(result.output)}</span>`);
+            setTimeout(() => window.close(), 1000);
+            return;
+          
+          case 'color':
+            state.textColor = result.color;
+            appendOutput(`<span class="success">${escapeHtml(result.output)}</span>`);
+            resetInput();
+            return;
+          
+          case 'open':
+            window.open(result.output, '_blank');
+            appendOutput(`<span class="success">Opening in new tab...</span>`);
+            resetInput();
+            return;
+        }
+      }
       
+      const className = result.success ? 'success' : 'error';
+      let outputHtml = `<span class="${className}">${escapeHtml(result.output)}</span>`;
+      
+      if (state.textColor) {
+        outputHtml = `<span class="color-${state.textColor}">${escapeHtml(result.output)}</span>`;
+      }
+      
+      appendOutput(outputHtml);
+      
+      updatePrompt();
       resetInput();
     }
 
-    /**
-     * コマンド失敗時の処理
-     */
     function handleError(error, loadingId) {
       removeOutput(loadingId);
-      
       appendOutput(`<span class="error">System Error: ${escapeHtml(error.message)}</span>`);
-      
       resetInput();
     }
 
-    /**
-     * 入力状態をリセット
-     */
+    function handleInterrupt() {
+      if (state.isProcessing) {
+        appendOutput(`<span class="error">^C (interrupted - note: cannot stop GAS execution)</span>`);
+      } else {
+        appendOutput(`<span class="error">^C</span>`);
+        commandInput.value = '';
+      }
+    }
+
     function resetInput() {
       commandInput.disabled = false;
       commandInput.focus();
@@ -299,13 +486,21 @@
       updateStatus('Ready');
     }
 
+    function updatePrompt() {
+      google.script.run
+        .withSuccessHandler((path) => {
+          state.currentPath = path;
+          currentPathEl.textContent = path;
+          const dirName = path === '/' ? 'root' : path.split('/').pop();
+          inputPrompt.textContent = `drive@${dirName}:~$`;
+        })
+        .getCurrentPath();
+    }
+
     // =====================================
     // History Navigation
     // =====================================
     
-    /**
-     * コマンド履歴をナビゲート
-     */
     function navigateHistory(direction) {
       if (state.commandHistory.length === 0) return;
       
@@ -329,9 +524,6 @@
     // UI Utilities
     // =====================================
     
-    /**
-     * ターミナルに出力を追加
-     */
     function appendOutput(html, returnsId = false) {
       const div = document.createElement('div');
       div.className = 'output-line';
@@ -349,36 +541,27 @@
       scrollToBottom();
     }
 
-    /**
-     * 指定IDの出力を削除
-     */
     function removeOutput(id) {
       const el = document.getElementById(id);
       if (el) el.remove();
     }
 
-    /**
-     * ステータス表示を更新
-     */
     function updateStatus(text) {
       statusEl.textContent = text;
     }
 
-    /**
-     * ターミナルを最下部にスクロール
-     */
     function scrollToBottom() {
       terminal.scrollTop = terminal.scrollHeight;
     }
 
-    /**
-     * HTMLエスケープ
-     */
     function escapeHtml(text) {
       const div = document.createElement('div');
       div.textContent = text;
       return div.innerHTML;
     }
+
+    // 初期プロンプト更新
+    updatePrompt();
   </script>
 </body>
 </html>
