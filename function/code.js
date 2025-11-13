@@ -102,7 +102,12 @@ function processCommand(commandLine) {
       'cd': cmdCd,
       'share': cmdShare,
       'trash': cmdTrash,
-      'help': cmdHelp
+      'help': cmdHelp,
+      'mv': cmdMove,
+      'cp': cmdCopyFile,
+      'touch': cmdTouch,
+      'mkdir': cmdMkdir,
+      'cat': cmdCat
     };
     
     if (commandMap[command]) {
@@ -635,18 +640,43 @@ function cmdOpen(args) {
 // =====================================
 
 function cmdShare(args) {
-  if (args.length < 3) {
-    return {success: false, output: 'Error: Usage: share <name> <email> <type>\nTypes: view, edit, comment'};
+  if (args.length === 0) {
+    return {
+      success: false,
+      output: 'Error: Usage:\n  share <name> <email> <type>\n  share <name> --link <type>\n  share <name> --list\nTypes: view, edit, comment'
+    };
   }
-  
+
+  const currentFolder = getCurrentFolder();
+
+  // --list フラグをチェック
+  if (args.length >= 2 && args[args.length - 1] === '--list') {
+    const name = args.slice(0, -1).join(' ');
+    return cmdShareList(name, currentFolder);
+  }
+
+  // --link フラグをチェック
+  if (args.length >= 3 && args[args.length - 2] === '--link') {
+    const type = args[args.length - 1].toLowerCase();
+    const name = args.slice(0, -2).join(' ');
+    return cmdShareLink(name, type, currentFolder);
+  }
+
+  // 通常の共有
+  if (args.length < 3) {
+    return {
+      success: false,
+      output: 'Error: Usage:\n  share <name> <email> <type>\n  share <name> --link <type>\n  share <name> --list\nTypes: view, edit, comment'
+    };
+  }
+
   const type = args[args.length - 1].toLowerCase();
   const email = args[args.length - 2];
   const name = args.slice(0, -2).join(' ');
-  const currentFolder = getCurrentFolder();
-  
+
   try {
     let target = null;
-    
+
     let folders = currentFolder.getFoldersByName(name);
     if (folders.hasNext()) {
       target = folders.next();
@@ -656,11 +686,16 @@ function cmdShare(args) {
         target = files.next();
       }
     }
-    
+
     if (!target) {
       return {success: false, output: `Error: '${name}' not found`};
     }
-    
+
+    // メールアドレスの簡易検証
+    if (!email.includes('@') || !email.includes('.')) {
+      return {success: false, output: `Error: Invalid email address '${email}'`};
+    }
+
     switch (type) {
       case 'view':
         target.addViewer(email);
@@ -672,11 +707,110 @@ function cmdShare(args) {
         target.addCommenter(email);
         break;
       default:
-        return {success: false, output: `Error: Unknown permission type '${type}'`};
+        return {success: false, output: `Error: Unknown permission type '${type}'\nValid types: view, edit, comment`};
     }
-    
+
     return {success: true, output: `Shared ${name} with ${email} (${type})`};
-    
+
+  } catch (error) {
+    return {success: false, output: `Error: ${error.message}`};
+  }
+}
+
+function cmdShareLink(name, type, currentFolder) {
+  try {
+    let target = null;
+
+    let folders = currentFolder.getFoldersByName(name);
+    if (folders.hasNext()) {
+      target = folders.next();
+    } else {
+      let files = currentFolder.getFilesByName(name);
+      if (files.hasNext()) {
+        target = files.next();
+      }
+    }
+
+    if (!target) {
+      return {success: false, output: `Error: '${name}' not found`};
+    }
+
+    let permission;
+    switch (type) {
+      case 'view':
+        permission = DriveApp.Permission.VIEW;
+        break;
+      case 'edit':
+        permission = DriveApp.Permission.EDIT;
+        break;
+      case 'comment':
+        permission = DriveApp.Permission.COMMENT;
+        break;
+      default:
+        return {success: false, output: `Error: Unknown permission type '${type}'\nValid types: view, edit, comment`};
+    }
+
+    target.setSharing(DriveApp.Access.ANYONE_WITH_LINK, permission);
+
+    let output = `Link sharing enabled for ${name}\n`;
+    output += `Permission: Anyone with link can ${type}\n`;
+    output += `URL: ${target.getUrl()}`;
+
+    return {success: true, output: output};
+
+  } catch (error) {
+    return {success: false, output: `Error: ${error.message}`};
+  }
+}
+
+function cmdShareList(name, currentFolder) {
+  try {
+    let target = null;
+
+    let folders = currentFolder.getFoldersByName(name);
+    if (folders.hasNext()) {
+      target = folders.next();
+    } else {
+      let files = currentFolder.getFilesByName(name);
+      if (files.hasNext()) {
+        target = files.next();
+      }
+    }
+
+    if (!target) {
+      return {success: false, output: `Error: '${name}' not found`};
+    }
+
+    let output = `=== Sharing Settings for ${name} ===\n\n`;
+    output += `Owner: ${target.getOwner().getEmail()}\n\n`;
+
+    // 編集者を取得
+    const editors = target.getEditors();
+    if (editors.length > 0) {
+      output += `Editors:\n`;
+      editors.forEach(editor => {
+        output += `  - ${editor.getEmail()}\n`;
+      });
+      output += '\n';
+    }
+
+    // 閲覧者を取得
+    const viewers = target.getViewers();
+    if (viewers.length > 0) {
+      output += `Viewers:\n`;
+      viewers.forEach(viewer => {
+        output += `  - ${viewer.getEmail()}\n`;
+      });
+      output += '\n';
+    }
+
+    // 共有設定を取得
+    const access = target.getSharingAccess();
+    const permission = target.getSharingPermission();
+    output += `Link sharing: ${access} (${permission})`;
+
+    return {success: true, output: output};
+
   } catch (error) {
     return {success: false, output: `Error: ${error.message}`};
   }
@@ -802,8 +936,92 @@ function cmdClone(args) {
   if (args.length === 0) {
     return {success: false, output: 'Error: Usage: clone <URL>'};
   }
-  
-  return {success: false, output: 'Error: Git clone not supported in Google Drive environment'};
+
+  const url = args[0];
+
+  try {
+    // GitHubのURLをチェック
+    let repoUrl = url;
+    let repoName = '';
+
+    // GitHub URL からリポジトリ名を抽出
+    if (url.includes('github.com')) {
+      const match = url.match(/github\.com\/([^\/]+)\/([^\/\.]+)/);
+      if (match) {
+        repoName = match[2];
+        // GitHub の raw content URL に変換（zipファイル取得用）
+        repoUrl = `https://github.com/${match[1]}/${match[2]}/archive/refs/heads/main.zip`;
+      } else {
+        return {success: false, output: 'Error: Invalid GitHub URL format'};
+      }
+    } else if (url.includes('gitlab.com')) {
+      const match = url.match(/gitlab\.com\/([^\/]+)\/([^\/\.]+)/);
+      if (match) {
+        repoName = match[2];
+        repoUrl = `https://gitlab.com/${match[1]}/${match[2]}/-/archive/main/${match[2]}-main.zip`;
+      } else {
+        return {success: false, output: 'Error: Invalid GitLab URL format'};
+      }
+    } else {
+      return {success: false, output: 'Error: Only GitHub and GitLab are currently supported'};
+    }
+
+    // リポジトリをダウンロード
+    const response = UrlFetchApp.fetch(repoUrl, {
+      muteHttpExceptions: true,
+      followRedirects: true
+    });
+
+    if (response.getResponseCode() !== 200) {
+      // mainブランチが存在しない場合、masterブランチを試す
+      if (url.includes('github.com')) {
+        const match = url.match(/github\.com\/([^\/]+)\/([^\/\.]+)/);
+        repoUrl = `https://github.com/${match[1]}/${match[2]}/archive/refs/heads/master.zip`;
+      } else if (url.includes('gitlab.com')) {
+        const match = url.match(/gitlab\.com\/([^\/]+)\/([^\/\.]+)/);
+        repoUrl = `https://gitlab.com/${match[1]}/${match[2]}/-/archive/master/${match[2]}-master.zip`;
+      }
+
+      const retryResponse = UrlFetchApp.fetch(repoUrl, {
+        muteHttpExceptions: true,
+        followRedirects: true
+      });
+
+      if (retryResponse.getResponseCode() !== 200) {
+        return {success: false, output: `Error: Failed to download repository (HTTP ${response.getResponseCode()})`};
+      }
+
+      // 現在のフォルダにZIPファイルとして保存
+      const currentFolder = getCurrentFolder();
+      const blob = retryResponse.getBlob();
+      const zipFile = currentFolder.createFile(blob.setName(`${repoName}.zip`));
+
+      // ZIPファイルを解凍（Google Driveでは自動解凍されないため、zipのまま保存）
+      let output = `Repository cloned successfully!\n`;
+      output += `File: ${repoName}.zip\n`;
+      output += `Location: ${getCurrentPath()}\n`;
+      output += `Size: ${formatBytes(zipFile.getSize())}\n\n`;
+      output += `Note: Repository downloaded as ZIP file. Extract manually if needed.`;
+
+      return {success: true, output: output};
+    }
+
+    // 現在のフォルダにZIPファイルとして保存
+    const currentFolder = getCurrentFolder();
+    const blob = response.getBlob();
+    const zipFile = currentFolder.createFile(blob.setName(`${repoName}.zip`));
+
+    let output = `Repository cloned successfully!\n`;
+    output += `File: ${repoName}.zip\n`;
+    output += `Location: ${getCurrentPath()}\n`;
+    output += `Size: ${formatBytes(zipFile.getSize())}\n\n`;
+    output += `Note: Repository downloaded as ZIP file. Extract manually if needed.`;
+
+    return {success: true, output: output};
+
+  } catch (error) {
+    return {success: false, output: `Error: ${error.message}`};
+  }
 }
 
 function cmdHelp(args) {
@@ -826,10 +1044,15 @@ FILE OPERATIONS:
   new <name> sheet      Create Google Spreadsheet
   new <name> docs       Create Google Document
   new <name> slide      Create Google Slides
+  touch <name>          Create empty text file
+  mkdir <name>          Create new folder
   rn <old> <new>        Rename file or folder
   del <name>            Move file/folder to trash
   copy <name>           Copy file to clipboard
   paste                 Paste file from clipboard
+  mv <src> <dst>        Move file/folder to destination
+  cp <src> <dst>        Copy file to destination
+  cat <name>            Display file content (text files only)
 
 METADATA:
   stat <name>           Show detailed statistics
@@ -839,10 +1062,16 @@ METADATA:
 SHARING:
   share <name> <email> <type>
                         Share with user (type: view/edit/comment)
+  share <name> --link <type>
+                        Enable link sharing
+  share <name> --list   Show sharing settings
 
 TRASH:
   trash                 List trashed items
   trash <name> restore  Restore item from trash
+
+SPECIAL:
+  clone <URL>           Clone Git repository (GitHub/GitLab)
 
 UI CONTROL:
   clear                 Clear terminal screen
@@ -857,16 +1086,25 @@ HELP:
 Examples:
   > ls
   > cd Documents
-  > new report.txt file
-  > stat report.txt
+  > mkdir Projects
+  > touch notes.txt
+  > cat notes.txt
+  > mv report.txt Projects
+  > cp important.doc Backup
   > share report.txt user@example.com view
+  > share document.doc --link edit
+  > share presentation.pptx --list
+  > clone https://github.com/user/repository
   > cd ..
   > pwd
 
-Note: <n> = name (can include spaces)
+Note: <name> = file/folder name (can include spaces)
       <path> = directory path (absolute or relative)
+      <URL>  = Git repository URL (GitHub/GitLab)
+
+For detailed documentation, visit: /docs/command-detail.md
 `;
-  
+
   return {success: true, output: help};
 }
 
@@ -892,4 +1130,177 @@ function padRight(str, width) {
 
 function formatDate(date) {
   return Utilities.formatDate(date, Session.getScriptTimeZone(), 'yyyy-MM-dd HH:mm:ss');
+}
+
+// =====================================
+// UNIX-like Commands
+// =====================================
+
+function cmdMove(args) {
+  if (args.length < 2) {
+    return {success: false, output: 'Error: Usage: mv <source> <destination>'};
+  }
+
+  const destination = args[args.length - 1];
+  const source = args.slice(0, -1).join(' ');
+  const currentFolder = getCurrentFolder();
+
+  try {
+    // 移動元を検索
+    let sourceItem = null;
+    let isFolder = false;
+
+    let folders = currentFolder.getFoldersByName(source);
+    if (folders.hasNext()) {
+      sourceItem = folders.next();
+      isFolder = true;
+    } else {
+      let files = currentFolder.getFilesByName(source);
+      if (files.hasNext()) {
+        sourceItem = files.next();
+        isFolder = false;
+      }
+    }
+
+    if (!sourceItem) {
+      return {success: false, output: `Error: '${source}' not found`};
+    }
+
+    // 移動先を検索
+    let destFolder = currentFolder.getFoldersByName(destination);
+    if (!destFolder.hasNext()) {
+      return {success: false, output: `Error: Destination folder '${destination}' not found`};
+    }
+
+    const targetFolder = destFolder.next();
+
+    // 移動を実行
+    if (isFolder) {
+      targetFolder.addFolder(sourceItem);
+      currentFolder.removeFolder(sourceItem);
+      return {success: true, output: `Moved directory: ${source} → ${destination}/`};
+    } else {
+      targetFolder.addFile(sourceItem);
+      currentFolder.removeFile(sourceItem);
+      return {success: true, output: `Moved file: ${source} → ${destination}/`};
+    }
+
+  } catch (error) {
+    return {success: false, output: `Error: ${error.message}`};
+  }
+}
+
+function cmdCopyFile(args) {
+  if (args.length < 2) {
+    return {success: false, output: 'Error: Usage: cp <source> <destination>'};
+  }
+
+  const destination = args[args.length - 1];
+  const source = args.slice(0, -1).join(' ');
+  const currentFolder = getCurrentFolder();
+
+  try {
+    // コピー元のファイルを検索
+    let files = currentFolder.getFilesByName(source);
+    if (!files.hasNext()) {
+      return {success: false, output: `Error: File '${source}' not found`};
+    }
+
+    const sourceFile = files.next();
+
+    // コピー先を検索
+    let destFolder = currentFolder.getFoldersByName(destination);
+    if (!destFolder.hasNext()) {
+      return {success: false, output: `Error: Destination folder '${destination}' not found`};
+    }
+
+    const targetFolder = destFolder.next();
+
+    // コピーを実行
+    const copiedFile = sourceFile.makeCopy(sourceFile.getName(), targetFolder);
+
+    return {success: true, output: `Copied: ${source} → ${destination}/${copiedFile.getName()}`};
+
+  } catch (error) {
+    return {success: false, output: `Error: ${error.message}`};
+  }
+}
+
+function cmdTouch(args) {
+  if (args.length === 0) {
+    return {success: false, output: 'Error: Usage: touch <filename>'};
+  }
+
+  const name = args.join(' ');
+  const currentFolder = getCurrentFolder();
+
+  try {
+    const file = currentFolder.createFile(name, '', MimeType.PLAIN_TEXT);
+    return {success: true, output: `Created file: ${name}\nID: ${file.getId()}`};
+  } catch (error) {
+    return {success: false, output: `Error: ${error.message}`};
+  }
+}
+
+function cmdMkdir(args) {
+  if (args.length === 0) {
+    return {success: false, output: 'Error: Usage: mkdir <directory>'};
+  }
+
+  const name = args.join(' ');
+  const currentFolder = getCurrentFolder();
+
+  try {
+    const folder = currentFolder.createFolder(name);
+    return {success: true, output: `Created directory: ${name}\nID: ${folder.getId()}`};
+  } catch (error) {
+    return {success: false, output: `Error: ${error.message}`};
+  }
+}
+
+function cmdCat(args) {
+  if (args.length === 0) {
+    return {success: false, output: 'Error: Usage: cat <filename>'};
+  }
+
+  const name = args.join(' ');
+  const currentFolder = getCurrentFolder();
+
+  try {
+    let files = currentFolder.getFilesByName(name);
+    if (!files.hasNext()) {
+      return {success: false, output: `Error: File '${name}' not found`};
+    }
+
+    const file = files.next();
+    const mimeType = file.getMimeType();
+
+    // テキストファイルのみサポート
+    if (mimeType !== MimeType.PLAIN_TEXT && !mimeType.startsWith('text/')) {
+      return {
+        success: false,
+        output: `Error: Cannot display content of '${name}'\nMIME type: ${mimeType}\nOnly text files are supported.`
+      };
+    }
+
+    const content = file.getBlob().getDataAsString();
+
+    // ファイルが空の場合
+    if (content.length === 0) {
+      return {success: true, output: `(empty file)`};
+    }
+
+    // 内容が長すぎる場合は制限する（最大5000文字）
+    if (content.length > 5000) {
+      return {
+        success: true,
+        output: content.substring(0, 5000) + `\n\n... (truncated, ${content.length - 5000} more characters)`
+      };
+    }
+
+    return {success: true, output: content};
+
+  } catch (error) {
+    return {success: false, output: `Error: ${error.message}`};
+  }
 }
